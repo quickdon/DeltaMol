@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deltamol"
+version = "0.1.0"
+description = "Delta-corrected molecular potential learning toolkit"
+readme = "README.md"
+authors = [{name = "DeltaMol Contributors"}]
+requires-python = ">=3.9"
+dependencies = [
+    "torch",
+    "ase",
+    "h5py",
+    "numpy",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+descriptors = [
+    "dscribe",
+    "qmllib",
+]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+include = ["deltamol*"]
