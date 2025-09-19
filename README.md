@@ -93,3 +93,7 @@ pytest
 ```
 
 Contributions and suggestions are welcome!
+
+## License
+
+This project is licensed under the terms of the MIT license. See LICENSE for additional details.
