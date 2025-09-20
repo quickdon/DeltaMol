@@ -19,7 +19,10 @@ T = TypeVar("T")
 def save_config(config: Any, path: Path) -> None:
     if yaml is None:
         raise ImportError("pyyaml is required to save configs") from _IMPORT_ERROR
-    data = asdict(config)
+    data = {
+        key: (str(value) if isinstance(value, Path) else value)
+        for key, value in asdict(config).items()
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False))
 
