@@ -1,9 +1,24 @@
 """Training utilities for DeltaMol."""
-from .pipeline import TensorDataset, Trainer, TrainingConfig, train_baseline
+from .datasets import MolecularGraph, MolecularGraphDataset, collate_graphs
+from .pipeline import (
+    PotentialTrainer,
+    PotentialTrainingConfig,
+    TensorDataset,
+    Trainer,
+    TrainingConfig,
+    train_baseline,
+    train_potential_model,
+)
 
 __all__ = [
+    "MolecularGraph",
+    "MolecularGraphDataset",
+    "PotentialTrainer",
+    "PotentialTrainingConfig",
     "TensorDataset",
     "Trainer",
     "TrainingConfig",
+    "collate_graphs",
     "train_baseline",
+    "train_potential_model",
 ]
