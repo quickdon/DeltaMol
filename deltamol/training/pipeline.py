@@ -1,6 +1,8 @@
 """High level training orchestration utilities."""
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence
@@ -12,6 +14,26 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from ..models.baseline import LinearAtomicBaseline, LinearBaselineConfig
 from ..models.potential import PotentialOutput
 from .datasets import MolecularGraphDataset, collate_graphs
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _emit_info(message: str) -> None:
+    """Emit an informational message via logging with stdout fallback."""
+
+    LOGGER.info(message)
+    if not (LOGGER.hasHandlers() and LOGGER.isEnabledFor(logging.INFO)):
+        print(message)
+
+
+def _save_history(output_dir: Path, history: Dict[str, float]) -> Path:
+    """Persist a training history dictionary to ``history.json``."""
+
+    history_path = output_dir / "history.json"
+    with history_path.open("w", encoding="utf-8") as handle:
+        json.dump(history, handle, indent=2)
+    _emit_info(f"Saved training history to {history_path}")
+    return history_path
 
 
 @dataclass
@@ -37,6 +59,7 @@ class Trainer:
         self.criterion = nn.MSELoss()
         self.output_dir = config.output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.history: Dict[str, float] = {}
 
     def _resolve_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -49,6 +72,12 @@ class Trainer:
 
     def train(self, dataloader: DataLoader, *, val_loader: Optional[DataLoader] = None) -> Dict[str, float]:
         history: Dict[str, float] = {}
+        train_samples = len(getattr(dataloader, "dataset", []))
+        val_samples = len(getattr(val_loader, "dataset", [])) if val_loader is not None else 0
+        summary = f"Starting training for {self.config.epochs} epochs on {train_samples} samples"
+        if val_loader is not None:
+            summary += f" with {val_samples} validation samples"
+        _emit_info(summary)
         log_interval = max(int(self.config.log_every), 1)
         for epoch in range(1, self.config.epochs + 1):
             train_loss = self._run_epoch(dataloader, training=True)
@@ -61,7 +90,9 @@ class Trainer:
                 message = f"Epoch {epoch:03d} | train: {train_loss:.4f}"
                 if val_loss is not None:
                     message += f" | val: {val_loss:.4f}"
-                print(message)
+                _emit_info(message)
+        self.history = history
+        _save_history(self.output_dir, history)
         return history
 
     def _run_epoch(self, dataloader: DataLoader, *, training: bool) -> float:
@@ -152,6 +183,7 @@ class PotentialTrainer:
         self.output_dir = config.output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.baseline = baseline
+        self.history: Dict[str, float] = {}
         if self.baseline is not None:
             self.baseline.to(self.device)
             self.baseline.eval()
@@ -169,6 +201,21 @@ class PotentialTrainer:
 
     def train(self, dataloader: DataLoader, *, val_loader: Optional[DataLoader] = None) -> Dict[str, float]:
         history: Dict[str, float] = {}
+        train_samples = len(getattr(dataloader, "dataset", []))
+        val_samples = len(getattr(val_loader, "dataset", [])) if val_loader is not None else 0
+        summary = (
+            f"Starting potential training for {self.config.epochs} epochs on {train_samples} samples"
+        )
+        if val_loader is not None:
+            summary += f" with {val_samples} validation samples"
+        details = [f"energy weight={self.config.energy_weight}"]
+        if self.config.force_weight > 0.0:
+            details.append(f"force weight={self.config.force_weight}")
+            if self.config.predict_forces_directly:
+                details.append("predicting forces directly")
+        if details:
+            summary += " (" + ", ".join(details) + ")"
+        _emit_info(summary)
         log_interval = max(int(self.config.log_every), 1)
         for epoch in range(1, self.config.epochs + 1):
             train_metrics = self._run_epoch(dataloader, training=True)
@@ -181,7 +228,9 @@ class PotentialTrainer:
                 message = f"Epoch {epoch:03d} | train: {train_metrics['loss']:.4f}"
                 if val_metrics is not None:
                     message += f" | val: {val_metrics['loss']:.4f}"
-                print(message)
+                _emit_info(message)
+        self.history = history
+        _save_history(self.output_dir, history)
         return history
 
     def _run_epoch(self, dataloader: DataLoader, *, training: bool) -> Dict[str, float]:
