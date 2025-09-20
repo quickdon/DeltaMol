@@ -49,15 +49,19 @@ class Trainer:
 
     def train(self, dataloader: DataLoader, *, val_loader: Optional[DataLoader] = None) -> Dict[str, float]:
         history: Dict[str, float] = {}
+        log_interval = max(int(self.config.log_every), 1)
         for epoch in range(1, self.config.epochs + 1):
             train_loss = self._run_epoch(dataloader, training=True)
             history[f"train/{epoch}"] = train_loss
+            val_loss: Optional[float] = None
             if val_loader is not None:
                 val_loss = self._run_epoch(val_loader, training=False)
                 history[f"val/{epoch}"] = val_loss
-            if epoch % self.config.log_every == 0:
-                print(f"Epoch {epoch:03d} | train: {train_loss:.4f}"
-                      + (f" | val: {val_loss:.4f}" if val_loader is not None else ""))
+            if epoch == 1 or epoch == self.config.epochs or epoch % log_interval == 0:
+                message = f"Epoch {epoch:03d} | train: {train_loss:.4f}"
+                if val_loss is not None:
+                    message += f" | val: {val_loss:.4f}"
+                print(message)
         return history
 
     def _run_epoch(self, dataloader: DataLoader, *, training: bool) -> float:
@@ -165,17 +169,17 @@ class PotentialTrainer:
 
     def train(self, dataloader: DataLoader, *, val_loader: Optional[DataLoader] = None) -> Dict[str, float]:
         history: Dict[str, float] = {}
+        log_interval = max(int(self.config.log_every), 1)
         for epoch in range(1, self.config.epochs + 1):
             train_metrics = self._run_epoch(dataloader, training=True)
             history[f"train/{epoch}"] = train_metrics["loss"]
+            val_metrics: Optional[Dict[str, float]] = None
             if val_loader is not None:
                 val_metrics = self._run_epoch(val_loader, training=False)
                 history[f"val/{epoch}"] = val_metrics["loss"]
-            if epoch % self.config.log_every == 0:
-                message = (
-                    f"Epoch {epoch:03d} | train: {train_metrics['loss']:.4f}"
-                )
-                if val_loader is not None:
+            if epoch == 1 or epoch == self.config.epochs or epoch % log_interval == 0:
+                message = f"Epoch {epoch:03d} | train: {train_metrics['loss']:.4f}"
+                if val_metrics is not None:
                     message += f" | val: {val_metrics['loss']:.4f}"
                 print(message)
         return history

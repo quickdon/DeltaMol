@@ -25,6 +25,10 @@ def run_baseline_training(
 
     dataset = load_npz_dataset(dataset_path)
     species = sorted({int(z) for atoms in dataset.atoms for z in atoms})
+    print(
+        "Starting baseline training on "
+        f"{len(dataset.energies)} molecules with {len(species)} species",
+    )
     formula_vectors = torch.stack(
         [build_formula_vector(atoms, species=species) for atoms in dataset.atoms]
     )
@@ -37,9 +41,13 @@ def run_baseline_training(
         validation_split=validation_split,
     )
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
-    trainer.save_checkpoint(output_dir / "baseline.pt")
+    checkpoint_path = output_dir / "baseline.pt"
+    trainer.save_checkpoint(checkpoint_path)
+    print(f"Saved baseline checkpoint to {checkpoint_path}")
     try:
-        save_config(config, output_dir / "config.yaml")
+        config_path = output_dir / "config.yaml"
+        save_config(config, config_path)
+        print(f"Saved training configuration to {config_path}")
     except ImportError as exc:
         print(f"Skipping config serialization: {exc}")
 
