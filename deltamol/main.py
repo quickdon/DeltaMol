@@ -67,3 +67,7 @@ def main(argv: Iterable[str] | None = None) -> None:
 
 
 __all__ = ["main", "run_baseline_training"]
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI convenience
+    main()
