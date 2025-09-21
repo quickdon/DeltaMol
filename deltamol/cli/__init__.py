@@ -104,57 +104,6 @@ def _train_baseline(args: argparse.Namespace) -> None:
         solver=args.solver,
         config=config,
     )
-    training_cfg = experiment.training
-    overrides = {}
-    if args.output is not None:
-        overrides["output_dir"] = args.output
-    if args.epochs is not None:
-        overrides["epochs"] = args.epochs
-    if args.batch_size is not None:
-        overrides["batch_size"] = args.batch_size
-    if args.lr is not None:
-        overrides["learning_rate"] = args.lr
-    if args.validation_split is not None:
-        overrides["validation_split"] = args.validation_split
-    if overrides:
-        if "output_dir" in overrides and not isinstance(overrides["output_dir"], Path):
-            overrides["output_dir"] = Path(overrides["output_dir"])
-        training_cfg = replace(training_cfg, **overrides)
-    elif not isinstance(training_cfg.output_dir, Path):
-        training_cfg = replace(training_cfg, output_dir=Path(training_cfg.output_dir))
-    if training_cfg.output_dir is None:
-        raise ValueError("Potential training configuration must define an output directory")
-    configure_logging(training_cfg.output_dir)
-    LOGGER.info("Training potential model using dataset at %s", dataset_path)
-    model = _build_potential_model(experiment.model, species)
-    baseline = _load_baseline(experiment.baseline, species)
-    if baseline is not None and experiment.baseline is not None:
-        LOGGER.info("Loaded baseline checkpoint from %s", experiment.baseline.checkpoint)
-    trainer = train_potential_model(
-        graph_dataset,
-        model,
-        config=training_cfg,
-        baseline=baseline,
-    )
-    checkpoint_path = training_cfg.output_dir / "potential.pt"
-    trainer.save_checkpoint(checkpoint_path)
-    LOGGER.info("Saved potential checkpoint to %s", checkpoint_path)
-    resolved_dataset_cfg = replace(experiment.dataset, path=dataset_path, species=species)
-    resolved_model_cfg = replace(experiment.model)
-    resolved_baseline_cfg = (
-        replace(experiment.baseline, species=tuple(experiment.baseline.species or species))
-        if experiment.baseline is not None
-        else None
-    )
-    resolved_experiment = PotentialExperimentConfig(
-        training=training_cfg,
-        model=resolved_model_cfg,
-        dataset=resolved_dataset_cfg,
-        baseline=resolved_baseline_cfg,
-    )
-    config_path = training_cfg.output_dir / "experiment.yaml"
-    save_config(resolved_experiment, config_path)
-    LOGGER.info("Saved experiment configuration to %s", config_path)
 
 
 def _train_potential(args: argparse.Namespace) -> None:
