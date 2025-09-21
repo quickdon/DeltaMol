@@ -68,6 +68,70 @@ The command will:
 2. Train the linear baseline with mean squared error.
 3. Save the trained model checkpoint and configuration into the output folder.
 
+Advanced options such as the optimizer family, scheduler, or device can be
+specified via a YAML file and passed to the command with `--config`. Any
+arguments provided on the CLI continue to override the values defined in the
+configuration file, so the most common tweaks remain one flag away:
+
+```yaml
+# baseline.yaml
+output_dir: runs/baseline-adamw
+optimizer: adamw
+weight_decay: 0.01
+scheduler: cosine
+warmup_steps: 500
+min_lr_ratio: 0.2
+device: cuda
+```
+
+```bash
+python -m deltamol.main train-baseline data.npz --config baseline.yaml --epochs 300
+```
+
+### Potential training with configuration files
+
+The `train-potential` subcommand consumes a structured YAML file that describes
+dataset preprocessing, model architecture, and training parameters. Only the
+most important options such as the dataset path and output directory need to be
+specified on the CLI; all other values live alongside the experiment
+definition.
+
+```yaml
+# configs/potential.yaml
+dataset:
+  path: datasets/DFT_uniques.npz
+  cutoff: 6.0
+  dtype: float32
+model:
+  name: transformer
+  hidden_dim: 256
+  num_layers: 6
+  num_heads: 8
+  dropout: 0.1
+  predict_forces: true
+training:
+  output_dir: runs/potential-transformer
+  epochs: 80
+  batch_size: 16
+  learning_rate: 5.0e-4
+  optimizer: adamw
+  scheduler: cosine
+  warmup_steps: 1000
+  force_weight: 0.5
+baseline:
+  checkpoint: runs/baseline/baseline.pt
+```
+
+Launch the run with:
+
+```bash
+python -m deltamol.main train-potential --config configs/potential.yaml
+```
+
+The trainer will configure logging, build the requested model, run the
+experiment, and persist an `experiment.yaml` file in the output directory that
+captures the resolved dataset, model, and training parameters.
+
 ### Descriptor caching
 
 Use the `cache-descriptors` subcommand to precompute descriptor matrices:

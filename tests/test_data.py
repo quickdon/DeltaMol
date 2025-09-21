@@ -55,3 +55,15 @@ def test_molecular_graph_dataset_and_collate():
     assert torch.allclose(batch["energies"], torch.tensor([-76.4, -40.2]))
     assert "forces" in batch
     assert batch["forces"].shape == (2, 3, 3)
+
+
+def test_molecular_graph_dataset_accepts_string_dtype():
+    atoms = np.array([np.array([1, 1])], dtype=object)
+    coordinates = np.array([np.zeros((2, 3), dtype=np.float32)], dtype=object)
+    energies = np.array([-1.23], dtype=np.float32)
+    dataset = MolecularDataset(atoms=atoms, coordinates=coordinates, energies=energies, forces=None)
+
+    graph_dataset = MolecularGraphDataset(dataset, cutoff=3.0, dtype="float64")
+
+    graph = graph_dataset[0]
+    assert graph.positions.dtype == torch.float64

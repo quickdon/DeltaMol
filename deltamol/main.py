@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 import torch
 
@@ -20,10 +21,11 @@ def run_baseline_training(
     dataset_path: Path,
     output_dir: Path,
     *,
-    epochs: int = 200,
-    batch_size: int = 128,
-    learning_rate: float = 1e-2,
-    validation_split: float = 0.1,
+    epochs: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    learning_rate: Optional[float] = None,
+    validation_split: Optional[float] = None,
+    config: TrainingConfig | None = None,
 ) -> None:
     """Train the linear atomic baseline on a dataset."""
 
@@ -39,13 +41,27 @@ def run_baseline_training(
         [build_formula_vector(atoms, species=species) for atoms in dataset.atoms]
     )
     energies = torch.tensor(dataset.energies, dtype=torch.float32)
-    config = TrainingConfig(
-        output_dir=output_dir,
-        epochs=epochs,
-        learning_rate=learning_rate,
-        batch_size=batch_size,
-        validation_split=validation_split,
-    )
+    if config is None:
+        config = TrainingConfig(
+            output_dir=output_dir,
+            epochs=epochs if epochs is not None else 200,
+            learning_rate=learning_rate if learning_rate is not None else 1e-2,
+            batch_size=batch_size if batch_size is not None else 128,
+            validation_split=validation_split if validation_split is not None else 0.1,
+        )
+    else:
+        config = replace(
+            config,
+            output_dir=output_dir,
+            epochs=epochs if epochs is not None else config.epochs,
+            learning_rate=learning_rate if learning_rate is not None else config.learning_rate,
+            batch_size=batch_size if batch_size is not None else config.batch_size,
+            validation_split=(
+                validation_split
+                if validation_split is not None
+                else config.validation_split
+            ),
+        )
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
     checkpoint_path = output_dir / "baseline.pt"
     trainer.save_checkpoint(checkpoint_path)

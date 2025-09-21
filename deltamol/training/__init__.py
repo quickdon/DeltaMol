@@ -1,4 +1,5 @@
 """Training utilities for DeltaMol."""
+from .configs import BaselineConfig, DatasetConfig, ModelConfig, PotentialExperimentConfig
 from .datasets import MolecularGraph, MolecularGraphDataset, collate_graphs
 from .pipeline import (
     PotentialTrainer,
@@ -11,10 +12,14 @@ from .pipeline import (
 )
 
 __all__ = [
+    "BaselineConfig",
+    "DatasetConfig",
+    "ModelConfig",
     "MolecularGraph",
     "MolecularGraphDataset",
     "PotentialTrainer",
     "PotentialTrainingConfig",
+    "PotentialExperimentConfig",
     "TensorDataset",
     "Trainer",
     "TrainingConfig",

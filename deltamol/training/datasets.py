@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -33,13 +33,20 @@ class MolecularGraphDataset(Dataset):
         *,
         species: Optional[Sequence[int]] = None,
         cutoff: float = 5.0,
-        dtype: torch.dtype = torch.float32,
+        dtype: Union[torch.dtype, str] = torch.float32,
     ) -> None:
         self.cutoff = cutoff
         if species is None:
             unique_species = {int(z) for atoms in dataset.atoms for z in atoms}
             species = tuple(sorted(unique_species))
         self.species: Tuple[int, ...] = tuple(int(z) for z in species)
+        if isinstance(dtype, str):
+            try:
+                dtype = getattr(torch, dtype)
+            except AttributeError as exc:
+                raise ValueError(f"Unknown dtype string '{dtype}'") from exc
+            if not isinstance(dtype, torch.dtype):
+                raise ValueError(f"Resolved dtype '{dtype}' is not a torch.dtype")
         self.dtype = dtype
         self.index_map: Dict[int, int] = {z: i + 1 for i, z in enumerate(self.species)}
         self.has_forces = dataset.forces is not None
@@ -68,13 +75,14 @@ class MolecularGraphDataset(Dataset):
         forces: Optional[np.ndarray],
     ) -> MolecularGraph:
         node_indices = self._atoms_to_indices(atoms)
-        positions = torch.tensor(coordinates, dtype=self.dtype)
+        positions_array = np.asarray(coordinates, dtype=float)
+        positions = torch.tensor(positions_array, dtype=self.dtype)
         adjacency = self._build_adjacency(positions)
         energy_tensor = torch.tensor(float(energy), dtype=self.dtype)
         formula_vector = build_formula_vector(atoms, species=self.species).to(self.dtype)
         forces_tensor = None
         if forces is not None:
-            forces_tensor = torch.tensor(forces, dtype=self.dtype)
+            forces_tensor = torch.tensor(np.asarray(forces, dtype=float), dtype=self.dtype)
         return MolecularGraph(
             node_indices=node_indices,
             positions=positions,
