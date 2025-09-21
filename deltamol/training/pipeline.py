@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence
 
 import torch
 from torch import nn
+from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from ..models.baseline import LinearAtomicBaseline, LinearBaselineConfig
@@ -36,6 +38,147 @@ def _save_history(output_dir: Path, history: Dict[str, float]) -> Path:
     return history_path
 
 
+class WarmupDecayScheduler:
+    """Learning rate scheduler with warmup and configurable decay."""
+
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        *,
+        warmup_steps: int,
+        total_steps: int,
+        strategy: str,
+        min_lr_ratio: float,
+        gamma: float,
+        step_size: int,
+    ) -> None:
+        self.optimizer = optimizer
+        self.strategy = strategy
+        self.warmup_steps = max(int(warmup_steps), 0)
+        inferred_total = max(int(total_steps), 1)
+        self.total_steps = max(inferred_total, self.warmup_steps + 1)
+        self.min_lr_ratio = max(float(min_lr_ratio), 0.0)
+        self.gamma = float(gamma)
+        self.step_size = max(int(step_size), 1)
+        self.base_lrs = [group["lr"] for group in optimizer.param_groups]
+        self.current_step = 0
+        self.last_lrs = list(self.base_lrs)
+        self._apply_lrs()
+
+    def state_dict(self) -> Dict[str, object]:
+        return {
+            "current_step": self.current_step,
+            "last_lrs": list(self.last_lrs),
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, object]) -> None:
+        self.current_step = int(state_dict.get("current_step", 0))
+        self._apply_lrs()
+
+    def step(self) -> None:
+        if self.current_step < self.total_steps - 1:
+            self.current_step += 1
+        self._apply_lrs()
+
+    def _apply_lrs(self) -> None:
+        factor = self._compute_factor(self.current_step)
+        self.last_lrs = []
+        for base_lr, group in zip(self.base_lrs, self.optimizer.param_groups):
+            new_lr = base_lr * factor
+            group["lr"] = new_lr
+            self.last_lrs.append(new_lr)
+
+    def _compute_factor(self, step: int) -> float:
+        if self.total_steps <= 1:
+            return 1.0
+        if step < self.warmup_steps:
+            return (step + 1) / max(1, self.warmup_steps)
+        decay_steps = self.total_steps - self.warmup_steps
+        if decay_steps <= 1:
+            return 1.0
+        progress = (step - self.warmup_steps) / max(decay_steps - 1, 1)
+        progress = min(max(progress, 0.0), 1.0)
+        if self.strategy == "linear":
+            value = 1.0 - (1.0 - self.min_lr_ratio) * progress
+        elif self.strategy == "cosine":
+            value = self.min_lr_ratio + (1.0 - self.min_lr_ratio) * 0.5 * (
+                1.0 + math.cos(math.pi * progress)
+            )
+        elif self.strategy == "exponential":
+            exponent = max(step - self.warmup_steps, 0)
+            value = self.gamma**exponent
+        elif self.strategy == "step":
+            exponent = max(step - self.warmup_steps, 0) // self.step_size
+            value = self.gamma**exponent
+        elif self.strategy == "constant":
+            value = 1.0
+        else:  # pragma: no cover - guarded by validation
+            raise ValueError(f"Unknown scheduler strategy: {self.strategy}")
+        return max(value, self.min_lr_ratio)
+
+    def get_last_lr(self) -> Sequence[float]:
+        return list(self.last_lrs)
+
+
+def _build_optimizer(parameters, config: TrainingConfig) -> Optimizer:
+    name = config.optimizer.lower()
+    if name == "adam":
+        return torch.optim.Adam(
+            parameters,
+            lr=config.learning_rate,
+            betas=(config.beta1, config.beta2),
+            eps=config.eps,
+            weight_decay=config.weight_decay,
+            amsgrad=config.amsgrad,
+        )
+    if name == "adamw":
+        return torch.optim.AdamW(
+            parameters,
+            lr=config.learning_rate,
+            betas=(config.beta1, config.beta2),
+            eps=config.eps,
+            weight_decay=config.weight_decay,
+            amsgrad=config.amsgrad,
+        )
+    if name == "sgd":
+        return torch.optim.SGD(
+            parameters,
+            lr=config.learning_rate,
+            momentum=config.momentum,
+            weight_decay=config.weight_decay,
+            nesterov=config.nesterov,
+        )
+    raise ValueError(f"Unsupported optimizer '{config.optimizer}'")
+
+
+def _maybe_build_scheduler(
+    optimizer: Optimizer, config: TrainingConfig, steps_per_epoch: Optional[int]
+) -> Optional[WarmupDecayScheduler]:
+    strategy = (config.scheduler or "").lower()
+    if not strategy:
+        return None
+    supported = {"linear", "cosine", "exponential", "step", "constant"}
+    if strategy not in supported:
+        raise ValueError(f"Unsupported scheduler '{config.scheduler}'")
+    if config.scheduler_total_steps is not None:
+        total_steps = int(config.scheduler_total_steps)
+    elif steps_per_epoch is not None:
+        total_steps = steps_per_epoch * max(config.epochs, 1)
+    else:
+        return None
+    if total_steps <= 0:
+        return None
+    return WarmupDecayScheduler(
+        optimizer,
+        warmup_steps=config.warmup_steps,
+        total_steps=total_steps,
+        strategy=strategy,
+        min_lr_ratio=config.min_lr_ratio,
+        gamma=config.scheduler_gamma,
+        step_size=config.scheduler_step_size,
+    )
+
+
 @dataclass
 class TrainingConfig:
     output_dir: Path
@@ -45,6 +188,20 @@ class TrainingConfig:
     log_every: int = 10
     device: str = "auto"
     validation_split: float = 0.1
+    optimizer: str = "adam"
+    weight_decay: float = 0.0
+    beta1: float = 0.9
+    beta2: float = 0.999
+    eps: float = 1e-8
+    amsgrad: bool = False
+    momentum: float = 0.9
+    nesterov: bool = False
+    scheduler: Optional[str] = None
+    warmup_steps: int = 0
+    min_lr_ratio: float = 0.0
+    scheduler_gamma: float = 0.1
+    scheduler_step_size: int = 1000
+    scheduler_total_steps: Optional[int] = None
 
 
 class Trainer:
@@ -55,7 +212,8 @@ class Trainer:
         self.config = config
         self.device = self._resolve_device(config.device)
         self.model.to(self.device)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=config.learning_rate)
+        self.optimizer = _build_optimizer(self.model.parameters(), config)
+        self.scheduler: Optional[WarmupDecayScheduler] = None
         self.criterion = nn.MSELoss()
         self.output_dir = config.output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -74,9 +232,19 @@ class Trainer:
         history: Dict[str, float] = {}
         train_samples = len(getattr(dataloader, "dataset", []))
         val_samples = len(getattr(val_loader, "dataset", [])) if val_loader is not None else 0
+        try:
+            steps_per_epoch = len(dataloader)
+        except TypeError:
+            steps_per_epoch = None
+        self.scheduler = _maybe_build_scheduler(self.optimizer, self.config, steps_per_epoch)
         summary = f"Starting training for {self.config.epochs} epochs on {train_samples} samples"
         if val_loader is not None:
             summary += f" with {val_samples} validation samples"
+        summary += f" | optimizer={self.config.optimizer}"
+        if self.scheduler is not None:
+            summary += f", scheduler={self.config.scheduler}"
+            if self.config.warmup_steps > 0:
+                summary += f" (warmup={self.config.warmup_steps})"
         _emit_info(summary)
         log_interval = max(int(self.config.log_every), 1)
         for epoch in range(1, self.config.epochs + 1):
@@ -91,6 +259,9 @@ class Trainer:
                 if val_loss is not None:
                     message += f" | val: {val_loss:.4f}"
                 _emit_info(message)
+            if self.scheduler is not None:
+                lr_value = float(self.scheduler.get_last_lr()[0])
+                history[f"lr/{epoch}"] = lr_value
         self.history = history
         _save_history(self.output_dir, history)
         return history
@@ -110,6 +281,8 @@ class Trainer:
             if training:
                 loss.backward()
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
             total_loss += loss.item()
             n_batches += 1
         return total_loss / max(n_batches, 1)
@@ -177,7 +350,8 @@ class PotentialTrainer:
         self.config = config
         self.device = self._resolve_device(config.device)
         self.model.to(self.device)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=config.learning_rate)
+        self.optimizer = _build_optimizer(self.model.parameters(), config)
+        self.scheduler: Optional[WarmupDecayScheduler] = None
         self.energy_loss = nn.MSELoss()
         self.force_loss = nn.MSELoss()
         self.output_dir = config.output_dir
@@ -213,6 +387,17 @@ class PotentialTrainer:
             details.append(f"force weight={self.config.force_weight}")
             if self.config.predict_forces_directly:
                 details.append("predicting forces directly")
+        try:
+            steps_per_epoch = len(dataloader)
+        except TypeError:
+            steps_per_epoch = None
+        self.scheduler = _maybe_build_scheduler(self.optimizer, self.config, steps_per_epoch)
+        details.append(f"optimizer={self.config.optimizer}")
+        if self.scheduler is not None:
+            schedule_msg = f"scheduler={self.config.scheduler}"
+            if self.config.warmup_steps > 0:
+                schedule_msg += f" (warmup={self.config.warmup_steps})"
+            details.append(schedule_msg)
         if details:
             summary += " (" + ", ".join(details) + ")"
         _emit_info(summary)
@@ -229,6 +414,8 @@ class PotentialTrainer:
                 if val_metrics is not None:
                     message += f" | val: {val_metrics['loss']:.4f}"
                 _emit_info(message)
+            if self.scheduler is not None:
+                history[f"lr/{epoch}"] = float(self.scheduler.get_last_lr()[0])
         self.history = history
         _save_history(self.output_dir, history)
         return history
@@ -287,6 +474,8 @@ class PotentialTrainer:
                 if self.config.max_grad_norm is not None:
                     nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
             total_loss += loss.item()
             total_energy_loss += energy_loss.item()
             total_force_loss += force_loss_value.item()
