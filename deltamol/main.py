@@ -1,6 +1,7 @@
 """High level entry points for DeltaMol."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Iterable
 
@@ -10,6 +11,9 @@ from .config.manager import save_config
 from .data.io import load_npz_dataset
 from .models.baseline import build_formula_vector
 from .training.pipeline import TrainingConfig, train_baseline
+from .utils.logging import configure_logging
+
+LOGGER = logging.getLogger(__name__)
 
 
 def run_baseline_training(
@@ -23,8 +27,14 @@ def run_baseline_training(
 ) -> None:
     """Train the linear atomic baseline on a dataset."""
 
+    configure_logging(output_dir)
     dataset = load_npz_dataset(dataset_path)
     species = sorted({int(z) for atoms in dataset.atoms for z in atoms})
+    LOGGER.info(
+        "Starting baseline training on %d molecules with %d species",
+        len(dataset.energies),
+        len(species),
+    )
     formula_vectors = torch.stack(
         [build_formula_vector(atoms, species=species) for atoms in dataset.atoms]
     )
@@ -37,11 +47,15 @@ def run_baseline_training(
         validation_split=validation_split,
     )
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
-    trainer.save_checkpoint(output_dir / "baseline.pt")
+    checkpoint_path = output_dir / "baseline.pt"
+    trainer.save_checkpoint(checkpoint_path)
+    LOGGER.info("Saved baseline checkpoint to %s", checkpoint_path)
     try:
-        save_config(config, output_dir / "config.yaml")
+        config_path = output_dir / "config.yaml"
+        save_config(config, config_path)
+        LOGGER.info("Saved training configuration to %s", config_path)
     except ImportError as exc:
-        print(f"Skipping config serialization: {exc}")
+        LOGGER.warning("Skipping config serialization: %s", exc)
 
 
 def main(argv: Iterable[str] | None = None) -> None:
@@ -53,3 +67,7 @@ def main(argv: Iterable[str] | None = None) -> None:
 
 
 __all__ = ["main", "run_baseline_training"]
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI convenience
+    main()
