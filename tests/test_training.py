@@ -6,7 +6,7 @@ torch = pytest.importorskip("torch")
 from torch import nn
 from torch.utils.data import DataLoader
 
-from deltamol.training.pipeline import TensorDataset, Trainer, TrainingConfig
+from deltamol.training.pipeline import TensorDataset, Trainer, TrainingConfig, train_baseline
 
 
 def test_trainer_persists_history(tmp_path):
@@ -68,3 +68,36 @@ def test_trainer_supports_optimizer_and_scheduler(tmp_path):
     assert pytest.approx(expected_lr, rel=1e-5) == final_lr
     lr_keys = [key for key in trainer.history if key.startswith("lr/")]
     assert lr_keys, "learning rate history should be recorded when scheduler is active"
+
+
+def test_train_baseline_least_squares(tmp_path):
+    torch.manual_seed(0)
+    formula_vectors = torch.tensor(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    true_weights = torch.tensor([1.5, -0.75, 0.25], dtype=torch.float32)
+    energies = formula_vectors @ true_weights
+    config = TrainingConfig(
+        output_dir=tmp_path,
+        solver="least_squares",
+        validation_split=0.25,
+    )
+    trainer = train_baseline(
+        formula_vectors,
+        energies,
+        species=[1, 6, 8],
+        config=config,
+    )
+    learned = trainer.model.linear.weight.detach().cpu().squeeze(0)
+    assert torch.allclose(learned, true_weights, atol=1e-6)
+    assert pytest.approx(0.0, abs=1e-8) == trainer.history["train/1"]
+    if "val/1" in trainer.history:
+        assert pytest.approx(0.0, abs=1e-8) == trainer.history["val/1"]
+    history_path = tmp_path / "history.json"
+    assert history_path.exists()

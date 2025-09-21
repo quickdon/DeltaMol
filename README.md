@@ -68,6 +68,17 @@ The command will:
 2. Train the linear baseline with mean squared error.
 3. Save the trained model checkpoint and configuration into the output folder.
 
+When the baseline behaves like a simple linear regression, you can bypass
+iterative optimisation and recover the atomic energy coefficients with a single
+least-squares solve:
+
+```bash
+python -m deltamol.main train-baseline data.npz --solver least_squares
+```
+
+The same `solver` option can be stored inside a YAML configuration alongside
+other training overrides.
+
 Advanced options such as the optimizer family, scheduler, or device can be
 specified via a YAML file and passed to the command with `--config`. Any
 arguments provided on the CLI continue to override the values defined in the

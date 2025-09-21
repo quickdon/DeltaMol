@@ -196,6 +196,7 @@ class TrainingConfig:
     amsgrad: bool = False
     momentum: float = 0.9
     nesterov: bool = False
+    solver: str = "optimizer"
     scheduler: Optional[str] = None
     warmup_steps: int = 0
     min_lr_ratio: float = 0.0
@@ -308,19 +309,87 @@ class TensorDataset(Dataset):
         return self.inputs[index], self.targets[index]
 
 
-def train_baseline(formula_vectors: torch.Tensor, energies: torch.Tensor, *, species: Sequence[int], config: TrainingConfig) -> Trainer:
+def _solve_least_squares(
+    model: LinearAtomicBaseline,
+    dataset: TensorDataset,
+    *,
+    train_indices: Sequence[int],
+    val_indices: Sequence[int],
+    output_dir: Path,
+) -> Dict[str, float]:
+    train_indices = list(train_indices)
+    val_indices = list(val_indices)
+    if not train_indices:
+        raise ValueError("Least squares solver requires at least one training sample")
+    train_inputs = dataset.inputs[train_indices]
+    train_targets = dataset.targets[train_indices]
+    _emit_info(
+        "Fitting baseline with closed-form least squares on %d samples%s"
+        % (
+            len(train_indices),
+            f" and {len(val_indices)} validation samples" if val_indices else "",
+        )
+    )
+    with torch.no_grad():
+        solution = torch.linalg.lstsq(
+            train_inputs.to(torch.float64), train_targets.to(torch.float64).unsqueeze(-1)
+        ).solution.squeeze(-1)
+        model.linear.weight.data.copy_(solution.to(train_inputs.dtype).unsqueeze(0))
+    history: Dict[str, float] = {}
+    with torch.no_grad():
+        train_predictions = model(train_inputs)
+        train_loss = torch.mean((train_predictions - train_targets) ** 2).item()
+        history["train/1"] = train_loss
+        if val_indices:
+            val_inputs = dataset.inputs[val_indices]
+            val_targets = dataset.targets[val_indices]
+            val_predictions = model(val_inputs)
+            val_loss = torch.mean((val_predictions - val_targets) ** 2).item()
+            history["val/1"] = val_loss
+    message = f"Least squares fit | train: {train_loss:.4f}"
+    if "val/1" in history:
+        message += f" | val: {history['val/1']:.4f}"
+    _emit_info(message)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _save_history(output_dir, history)
+    return history
+
+
+def train_baseline(
+    formula_vectors: torch.Tensor,
+    energies: torch.Tensor,
+    *,
+    species: Sequence[int],
+    config: TrainingConfig,
+) -> Trainer:
     dataset = TensorDataset(formula_vectors, energies)
     val_size = int(len(dataset) * config.validation_split)
     if val_size > 0:
         train_size = len(dataset) - val_size
         train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
         val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
+        train_indices = list(train_dataset.indices)  # type: ignore[attr-defined]
+        val_indices = list(val_dataset.indices)  # type: ignore[attr-defined]
     else:
         train_dataset = dataset
         val_loader = None
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
+        train_indices = list(range(len(dataset)))
+        val_indices = []
     baseline_config = LinearBaselineConfig(species=tuple(species))
     model = LinearAtomicBaseline(baseline_config)
+    solver = getattr(config, "solver", "optimizer").lower()
+    if solver in {"least_squares", "ols", "linear_regression"}:
+        history = _solve_least_squares(
+            model,
+            dataset,
+            train_indices=train_indices,
+            val_indices=val_indices,
+            output_dir=config.output_dir,
+        )
+        trainer = Trainer(model, config)
+        trainer.history = history
+        return trainer
+    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     trainer = Trainer(model, config)
     trainer.train(train_loader, val_loader=val_loader)
     return trainer

@@ -25,6 +25,7 @@ def run_baseline_training(
     batch_size: Optional[int] = None,
     learning_rate: Optional[float] = None,
     validation_split: Optional[float] = None,
+    solver: Optional[str] = None,
     config: TrainingConfig | None = None,
 ) -> None:
     """Train the linear atomic baseline on a dataset."""
@@ -48,6 +49,7 @@ def run_baseline_training(
             learning_rate=learning_rate if learning_rate is not None else 1e-2,
             batch_size=batch_size if batch_size is not None else 128,
             validation_split=validation_split if validation_split is not None else 0.1,
+            solver=solver if solver is not None else "optimizer",
         )
     else:
         config = replace(
@@ -61,6 +63,7 @@ def run_baseline_training(
                 if validation_split is not None
                 else config.validation_split
             ),
+            solver=solver if solver is not None else config.solver,
         )
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
     checkpoint_path = output_dir / "baseline.pt"
