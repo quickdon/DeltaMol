@@ -2,16 +2,33 @@
 from __future__ import annotations
 
 import argparse
+import logging
+from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional, Sequence, Tuple
 
-from ..data.io import cache_descriptor_matrix, load_npz_dataset
+import torch
+
+from ..config.manager import load_config, save_config
+from ..data.io import MolecularDataset, cache_descriptor_matrix, load_npz_dataset
 from ..descriptors.acsf import build_acsf_descriptor
 from ..descriptors.fchl19 import build_fchl19_descriptor
 from ..descriptors.lmbtr import build_lmbtr_descriptor
 from ..descriptors.slatm import build_slatm_descriptor
 from ..descriptors.soap import build_soap_descriptor
 from ..main import run_baseline_training
+from ..models import (
+    GCNConfig,
+    GCNPotential,
+    LinearAtomicBaseline,
+    LinearBaselineConfig,
+    TransformerConfig,
+    TransformerPotential,
+)
+from ..training.configs import BaselineConfig, ModelConfig, PotentialExperimentConfig
+from ..training.datasets import MolecularGraphDataset
+from ..training.pipeline import TrainingConfig, train_potential_model
+from ..utils.logging import configure_logging
 
 _DESCRIPTOR_BUILDERS: Dict[str, Callable] = {
     "acsf": build_acsf_descriptor,
@@ -21,8 +38,62 @@ _DESCRIPTOR_BUILDERS: Dict[str, Callable] = {
     "fchl19": build_fchl19_descriptor,
 }
 
+LOGGER = logging.getLogger(__name__)
+
+
+def _resolve_species(dataset: MolecularDataset, explicit: Optional[Sequence[int]]) -> Tuple[int, ...]:
+    if explicit:
+        return tuple(int(z) for z in explicit)
+    species = {int(z) for atoms in dataset.atoms for z in atoms}
+    return tuple(sorted(species))
+
+
+def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
+    species_tuple = tuple(int(z) for z in species)
+    name = model_cfg.name.lower()
+    if name == "gcn":
+        config = GCNConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_layers=model_cfg.num_layers,
+            dropout=model_cfg.dropout,
+            use_coordinate_features=model_cfg.use_coordinate_features,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return GCNPotential(config)
+    if name in {"transformer", "transformer-potential"}:
+        config = TransformerConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_layers=model_cfg.num_layers,
+            num_heads=model_cfg.num_heads,
+            dropout=model_cfg.dropout,
+            ffn_dim=model_cfg.ffn_dim,
+            use_coordinate_features=model_cfg.use_coordinate_features,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return TransformerPotential(config)
+    raise ValueError(f"Unsupported potential model '{model_cfg.name}'")
+
+
+def _load_baseline(baseline_cfg: Optional[BaselineConfig], species: Sequence[int]):
+    if baseline_cfg is None or baseline_cfg.checkpoint is None:
+        return None
+    resolved_species = tuple(
+        int(z) for z in (baseline_cfg.species if baseline_cfg.species else species)
+    )
+    model = LinearAtomicBaseline(LinearBaselineConfig(species=resolved_species))
+    checkpoint = torch.load(baseline_cfg.checkpoint, map_location="cpu")
+    if isinstance(checkpoint, dict) and "model_state" in checkpoint:
+        state_dict = checkpoint["model_state"]
+    else:
+        state_dict = checkpoint
+    model.load_state_dict(state_dict)
+    return model
+
 
 def _train_baseline(args: argparse.Namespace) -> None:
+    config = load_config(args.config, TrainingConfig) if args.config else None
     run_baseline_training(
         args.dataset,
         args.output,
@@ -30,7 +101,76 @@ def _train_baseline(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         learning_rate=args.lr,
         validation_split=args.validation_split,
+        solver=args.solver,
+        config=config,
     )
+
+
+def _train_potential(args: argparse.Namespace) -> None:
+    experiment = load_config(args.config, PotentialExperimentConfig)
+    dataset_path = args.dataset or experiment.dataset.path
+    if dataset_path is None:
+        raise ValueError("A dataset path must be provided via the CLI or configuration file")
+    dataset_path = Path(dataset_path)
+    dataset = load_npz_dataset(dataset_path)
+    species = _resolve_species(dataset, experiment.dataset.species)
+    graph_dataset = MolecularGraphDataset(
+        dataset,
+        species=species,
+        cutoff=experiment.dataset.cutoff,
+        dtype=experiment.dataset.dtype,
+    )
+    training_cfg = experiment.training
+    overrides = {}
+    if args.output is not None:
+        overrides["output_dir"] = args.output
+    if args.epochs is not None:
+        overrides["epochs"] = args.epochs
+    if args.batch_size is not None:
+        overrides["batch_size"] = args.batch_size
+    if args.lr is not None:
+        overrides["learning_rate"] = args.lr
+    if args.validation_split is not None:
+        overrides["validation_split"] = args.validation_split
+    if overrides:
+        if "output_dir" in overrides and not isinstance(overrides["output_dir"], Path):
+            overrides["output_dir"] = Path(overrides["output_dir"])
+        training_cfg = replace(training_cfg, **overrides)
+    elif not isinstance(training_cfg.output_dir, Path):
+        training_cfg = replace(training_cfg, output_dir=Path(training_cfg.output_dir))
+    if training_cfg.output_dir is None:
+        raise ValueError("Potential training configuration must define an output directory")
+    configure_logging(training_cfg.output_dir)
+    LOGGER.info("Training potential model using dataset at %s", dataset_path)
+    model = _build_potential_model(experiment.model, species)
+    baseline = _load_baseline(experiment.baseline, species)
+    if baseline is not None and experiment.baseline is not None:
+        LOGGER.info("Loaded baseline checkpoint from %s", experiment.baseline.checkpoint)
+    trainer = train_potential_model(
+        graph_dataset,
+        model,
+        config=training_cfg,
+        baseline=baseline,
+    )
+    checkpoint_path = training_cfg.output_dir / "potential.pt"
+    trainer.save_checkpoint(checkpoint_path)
+    LOGGER.info("Saved potential checkpoint to %s", checkpoint_path)
+    resolved_dataset_cfg = replace(experiment.dataset, path=dataset_path, species=species)
+    resolved_model_cfg = replace(experiment.model)
+    resolved_baseline_cfg = (
+        replace(experiment.baseline, species=tuple(experiment.baseline.species or species))
+        if experiment.baseline is not None
+        else None
+    )
+    resolved_experiment = PotentialExperimentConfig(
+        training=training_cfg,
+        model=resolved_model_cfg,
+        dataset=resolved_dataset_cfg,
+        baseline=resolved_baseline_cfg,
+    )
+    config_path = training_cfg.output_dir / "experiment.yaml"
+    save_config(resolved_experiment, config_path)
+    LOGGER.info("Saved experiment configuration to %s", config_path)
 
 
 def _cache_descriptors(args: argparse.Namespace) -> None:
@@ -61,11 +201,57 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser = subcommands.add_parser("train-baseline", help="Train the linear atomic baseline")
     train_parser.add_argument("dataset", type=Path, help="Path to the NPZ dataset")
     train_parser.add_argument("--output", type=Path, default=Path("runs/baseline"))
-    train_parser.add_argument("--epochs", type=int, default=200)
-    train_parser.add_argument("--batch-size", type=int, default=128)
-    train_parser.add_argument("--lr", type=float, default=1e-2)
-    train_parser.add_argument("--validation-split", type=float, default=0.1)
+    train_parser.add_argument("--config", type=Path, help="YAML file with training overrides")
+    train_parser.add_argument("--epochs", type=int, default=None, help="Number of epochs (default: 200)")
+    train_parser.add_argument("--batch-size", type=int, default=None, help="Batch size (default: 128)")
+    train_parser.add_argument("--lr", type=float, default=None, help="Learning rate (default: 1e-2)")
+    train_parser.add_argument(
+        "--validation-split",
+        type=float,
+        default=None,
+        help="Validation fraction (default: 0.1)",
+    )
+    train_parser.add_argument(
+        "--solver",
+        choices=["optimizer", "least_squares"],
+        default=None,
+        help="Solver for the baseline weights (default: optimizer)",
+    )
     train_parser.set_defaults(func=_train_baseline)
+
+    potential_parser = subcommands.add_parser(
+        "train-potential", help="Train a neural potential with configurable settings"
+    )
+    potential_parser.add_argument(
+        "dataset",
+        type=Path,
+        nargs="?",
+        help="Path to the NPZ dataset (overrides dataset.path in the config)",
+    )
+    potential_parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="YAML file describing dataset, model, and training parameters",
+    )
+    potential_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Override the output directory defined in the config",
+    )
+    potential_parser.add_argument("--epochs", type=int, default=None, help="Override epochs")
+    potential_parser.add_argument(
+        "--batch-size", type=int, default=None, help="Override batch size"
+    )
+    potential_parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
+    potential_parser.add_argument(
+        "--validation-split",
+        type=float,
+        default=None,
+        help="Override validation split",
+    )
+    potential_parser.set_defaults(func=_train_potential)
 
     descriptor_parser = subcommands.add_parser(
         "cache-descriptors", help="Generate and cache atomic descriptors"
