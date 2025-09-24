@@ -116,6 +116,8 @@ def _train_baseline(args: argparse.Namespace) -> None:
         grad_scaler=grad_scaler,
         update_frequency=args.update_frequency,
         num_workers=args.num_workers,
+        log_every_steps=args.log_every_steps,
+        tensorboard=False if args.no_tensorboard else None,
         config=config,
     )
 
@@ -156,6 +158,10 @@ def _train_potential(args: argparse.Namespace) -> None:
         overrides["autocast_dtype"] = args.precision_dtype
     if args.no_grad_scaler:
         overrides["grad_scaler"] = False
+    if args.log_every_steps is not None:
+        overrides["log_every_steps"] = args.log_every_steps
+    if args.no_tensorboard:
+        overrides["tensorboard"] = False
     if overrides:
         if "output_dir" in overrides and not isinstance(overrides["output_dir"], Path):
             overrides["output_dir"] = Path(overrides["output_dir"])
@@ -293,6 +299,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Solver for the baseline weights (default: optimizer)",
     )
     train_parser.add_argument(
+        "--log-every-steps",
+        type=int,
+        default=None,
+        help="Print batch metrics every N steps (default: 100)",
+    )
+    train_parser.add_argument(
+        "--no-tensorboard",
+        action="store_true",
+        help="Disable TensorBoard logging for baseline training",
+    )
+    train_parser.add_argument(
         "--early-stopping-patience",
         type=int,
         default=None,
@@ -377,6 +394,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-grad-scaler",
         action="store_true",
         help="Disable gradient scaling during mixed precision runs",
+    )
+    potential_parser.add_argument(
+        "--log-every-steps",
+        type=int,
+        default=None,
+        help="Print batch metrics every N steps (default: 100)",
+    )
+    potential_parser.add_argument(
+        "--no-tensorboard",
+        action="store_true",
+        help="Disable TensorBoard logging for potential training",
     )
     potential_parser.set_defaults(func=_train_potential)
 

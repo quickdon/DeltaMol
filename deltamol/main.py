@@ -37,6 +37,8 @@ def run_baseline_training(
     mixed_precision: Optional[bool] = None,
     autocast_dtype: Optional[str] = None,
     grad_scaler: Optional[bool] = None,
+    log_every_steps: Optional[int] = None,
+    tensorboard: Optional[bool] = None,
     config: TrainingConfig | None = None,
 ) -> None:
     """Train the linear atomic baseline on a dataset."""
@@ -65,6 +67,10 @@ def run_baseline_training(
         override_kwargs["update_frequency"] = update_frequency
     if num_workers is not None:
         override_kwargs["num_workers"] = num_workers
+    if log_every_steps is not None:
+        override_kwargs["log_every_steps"] = log_every_steps
+    if tensorboard is not None:
+        override_kwargs["tensorboard"] = tensorboard
     if config is None:
         config = TrainingConfig(
             output_dir=output_dir,

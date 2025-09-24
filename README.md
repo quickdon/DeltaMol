@@ -122,6 +122,13 @@ with a global batch size of ``batch_size × world_size × update_frequency`` whe
 distributed training is enabled. Combine the flag with `--num-workers` to spin
 up multi-process data loading on both CPU and GPU hosts.
 
+Use `--log-every-steps` to control how often batch-level metrics are printed to
+the terminal (the default is every 100 steps). Every epoch summary reports its
+elapsed time and both the training and validation losses. Runs also emit
+TensorBoard event files under ``<output>/tensorboard`` capturing the train/val
+loss curves, learning-rate schedule, and other tracked scalars; pass
+`--no-tensorboard` if you prefer to skip event generation.
+
 ### Potential training with configuration files
 
 The `train-potential` subcommand consumes a structured YAML file that describes
@@ -174,6 +181,13 @@ and resume from the final optimiser state with minimal effort. Mixed precision
 can be toggled directly in the YAML file via the `mixed_precision`,
 `autocast_dtype`, and `grad_scaler` fields or overridden on the CLI with
 `--mixed-precision`, `--precision-dtype`, and `--no-grad-scaler`.
+
+The potential workflow mirrors the logging controls offered by the baseline
+trainer. Adjust batch-level verbosity with `--log-every-steps` and disable
+TensorBoard event generation via `--no-tensorboard` when desired. Each run
+writes train/validation energy and force loss curves, along with the learning
+rate and epoch durations, to ``<output>/tensorboard`` for convenient monitoring
+in TensorBoard.
 
 Distributed training is fully supported: launch the CLI with `torchrun` (for
 example `torchrun --nproc_per_node=4 python -m deltamol.main train-potential ...`)

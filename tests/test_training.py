@@ -6,6 +6,13 @@ torch = pytest.importorskip("torch")
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+try:  # pragma: no cover - optional dependency
+    import torch.utils.tensorboard  # type: ignore  # noqa: F401
+except Exception:  # pragma: no cover - tensorboard may be unavailable
+    TENSORBOARD_AVAILABLE = False
+else:  # pragma: no cover - presence of tensorboard suffices
+    TENSORBOARD_AVAILABLE = True
+
 from deltamol.models.baseline import LinearAtomicBaseline, LinearBaselineConfig
 from deltamol.models.potential import PotentialOutput
 from deltamol.training.pipeline import (
@@ -49,6 +56,10 @@ def test_trainer_persists_history(tmp_path):
     assert trainer.last_checkpoint_path == tmp_path / config.last_checkpoint_name
     assert trainer.best_checkpoint_path.exists()
     assert trainer.last_checkpoint_path.exists()
+    if TENSORBOARD_AVAILABLE:
+        event_dir = tmp_path / "tensorboard"
+        assert event_dir.exists()
+        assert any(event_dir.glob("events.*"))
 
 
 def test_trainer_supports_optimizer_and_scheduler(tmp_path):
@@ -270,6 +281,10 @@ def test_potential_trainer_baseline_requires_grad(tmp_path):
     assert trainer.last_checkpoint_path == trainable_dir / trainable_config.last_checkpoint_name
     assert trainer.best_checkpoint_path.exists()
     assert trainer.last_checkpoint_path.exists()
+    if TENSORBOARD_AVAILABLE:
+        event_dir = trainable_dir / "tensorboard"
+        assert event_dir.exists()
+        assert any(event_dir.glob("events.*"))
 
     frozen_dir = tmp_path / "frozen"
     frozen_config = PotentialTrainingConfig(
