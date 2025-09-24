@@ -22,6 +22,11 @@ try:  # pragma: no cover - optional dependency import guard
 except ImportError:  # pragma: no cover - tensorboard may be unavailable
     SummaryWriter = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional dependency import guard
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:  # pragma: no cover - tensorboard may be unavailable
+    SummaryWriter = None  # type: ignore[assignment]
+
 from ..models.baseline import LinearAtomicBaseline, LinearBaselineConfig
 from ..models.potential import PotentialOutput
 from .datasets import MolecularGraphDataset, collate_graphs
@@ -370,7 +375,7 @@ class TrainingConfig:
     batch_size: int = 32
     num_workers: int = 0
     update_frequency: int = 1
-    log_every: int = 10
+    log_every: int = 1
     log_every_steps: int = 100
     device: str = "auto"
     mixed_precision: bool = False
