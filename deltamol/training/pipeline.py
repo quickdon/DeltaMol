@@ -203,6 +203,10 @@ class TrainingConfig:
     scheduler_gamma: float = 0.1
     scheduler_step_size: int = 1000
     scheduler_total_steps: Optional[int] = None
+    early_stopping_patience: int = 0
+    early_stopping_min_delta: float = 0.0
+    best_checkpoint_name: str = "best.pt"
+    last_checkpoint_name: str = "last.pt"
 
 
 class Trainer:
@@ -219,6 +223,10 @@ class Trainer:
         self.output_dir = config.output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.history: Dict[str, float] = {}
+        self.best_checkpoint_path: Optional[Path] = None
+        self.last_checkpoint_path: Optional[Path] = None
+        self._best_metric: Optional[float] = None
+        self._early_stop_counter = 0
 
     def _resolve_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -263,6 +271,13 @@ class Trainer:
             if self.scheduler is not None:
                 lr_value = float(self.scheduler.get_last_lr()[0])
                 history[f"lr/{epoch}"] = lr_value
+            self._update_checkpoints(train_loss, val_loss)
+            if self._should_stop_early(val_loss):
+                _emit_info(
+                    "Early stopping triggered after epoch %03d (best %.4f)"
+                    % (epoch, self._best_metric if self._best_metric is not None else train_loss)
+                )
+                break
         self.history = history
         _save_history(self.output_dir, history)
         return history
@@ -289,10 +304,49 @@ class Trainer:
         return total_loss / max(n_batches, 1)
 
     def save_checkpoint(self, path: Path) -> None:
-        torch.save({
+        self._save_checkpoint(path)
+
+    def _checkpoint_state(self) -> Dict[str, object]:
+        return {
             "model_state": self.model.state_dict(),
             "config": self.config,
-        }, path)
+        }
+
+    def _save_checkpoint(self, path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(self._checkpoint_state(), path)
+        return path
+
+    def _resolve_checkpoint_name(self, filename: str) -> Path:
+        return self.output_dir / filename
+
+    def _update_checkpoints(self, train_loss: float, val_loss: Optional[float]) -> None:
+        monitor = val_loss if val_loss is not None else train_loss
+        if monitor is None:
+            return
+        improved = False
+        if self._best_metric is None or (
+            monitor < self._best_metric - float(self.config.early_stopping_min_delta)
+        ):
+            self._best_metric = monitor
+            self._early_stop_counter = 0
+            if self.config.best_checkpoint_name:
+                path = self._resolve_checkpoint_name(self.config.best_checkpoint_name)
+                self.best_checkpoint_path = self._save_checkpoint(path)
+                _emit_info(
+                    "New best checkpoint saved to %s (loss=%.4f)" % (path, float(monitor))
+                )
+            improved = True
+        if not improved and val_loss is not None and self.config.early_stopping_patience > 0:
+            self._early_stop_counter += 1
+        if self.config.last_checkpoint_name:
+            path = self._resolve_checkpoint_name(self.config.last_checkpoint_name)
+            self.last_checkpoint_path = self._save_checkpoint(path)
+
+    def _should_stop_early(self, val_loss: Optional[float]) -> bool:
+        if val_loss is None or self.config.early_stopping_patience <= 0:
+            return False
+        return self._early_stop_counter >= self.config.early_stopping_patience
 
 
 class TensorDataset(Dataset):
@@ -388,6 +442,19 @@ def train_baseline(
         )
         trainer = Trainer(model, config)
         trainer.history = history
+        monitor = history.get("val/1", history.get("train/1"))
+        if monitor is not None:
+            trainer._best_metric = monitor
+        if config.best_checkpoint_name:
+            path = trainer._resolve_checkpoint_name(config.best_checkpoint_name)
+            trainer.best_checkpoint_path = trainer._save_checkpoint(path)
+            if monitor is not None:
+                _emit_info(
+                    "New best checkpoint saved to %s (loss=%.4f)" % (path, float(monitor))
+                )
+        if config.last_checkpoint_name:
+            path = trainer._resolve_checkpoint_name(config.last_checkpoint_name)
+            trainer.last_checkpoint_path = trainer._save_checkpoint(path)
         return trainer
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     trainer = Trainer(model, config)
@@ -404,6 +471,12 @@ class PotentialTrainingConfig(TrainingConfig):
     predict_forces_directly: bool = False
     max_grad_norm: Optional[float] = None
 
+    def __post_init__(self) -> None:
+        if self.best_checkpoint_name == "best.pt":
+            self.best_checkpoint_name = "potential_best.pt"
+        if self.last_checkpoint_name == "last.pt":
+            self.last_checkpoint_name = "potential_last.pt"
+
 
 class PotentialTrainer:
     """Trainer that optimizes potential models for energies and forces."""
@@ -414,24 +487,36 @@ class PotentialTrainer:
         config: PotentialTrainingConfig,
         *,
         baseline: Optional[LinearAtomicBaseline] = None,
+        baseline_requires_grad: bool = True,
     ) -> None:
         self.model = model
         self.config = config
         self.device = self._resolve_device(config.device)
         self.model.to(self.device)
-        self.optimizer = _build_optimizer(self.model.parameters(), config)
+        parameters = list(self.model.parameters())
         self.scheduler: Optional[WarmupDecayScheduler] = None
         self.energy_loss = nn.MSELoss()
         self.force_loss = nn.MSELoss()
         self.output_dir = config.output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.baseline = baseline
+        self.baseline_trainable = baseline is not None and baseline_requires_grad
         self.history: Dict[str, float] = {}
+        self.best_checkpoint_path: Optional[Path] = None
+        self.last_checkpoint_path: Optional[Path] = None
+        self._best_metric: Optional[float] = None
+        self._early_stop_counter = 0
         if self.baseline is not None:
             self.baseline.to(self.device)
-            self.baseline.eval()
-            for param in self.baseline.parameters():
-                param.requires_grad_(False)
+            if self.baseline_trainable:
+                for param in self.baseline.parameters():
+                    param.requires_grad_(True)
+                parameters.extend(self.baseline.parameters())
+            else:
+                self.baseline.eval()
+                for param in self.baseline.parameters():
+                    param.requires_grad_(False)
+        self.optimizer = _build_optimizer(parameters, config)
 
     def _resolve_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -485,12 +570,28 @@ class PotentialTrainer:
                 _emit_info(message)
             if self.scheduler is not None:
                 history[f"lr/{epoch}"] = float(self.scheduler.get_last_lr()[0])
+            val_loss = val_metrics["loss"] if val_metrics is not None else None
+            self._update_checkpoints(train_metrics["loss"], val_loss)
+            if self._should_stop_early(val_loss):
+                _emit_info(
+                    "Early stopping triggered after epoch %03d (best %.4f)"
+                    % (
+                        epoch,
+                        self._best_metric if self._best_metric is not None else train_metrics["loss"],
+                    )
+                )
+                break
         self.history = history
         _save_history(self.output_dir, history)
         return history
 
     def _run_epoch(self, dataloader: DataLoader, *, training: bool) -> Dict[str, float]:
         self.model.train(mode=training)
+        if self.baseline is not None:
+            if self.baseline_trainable:
+                self.baseline.train(mode=training)
+            else:
+                self.baseline.eval()
         total_loss = 0.0
         total_energy_loss = 0.0
         total_force_loss = 0.0
@@ -501,8 +602,12 @@ class PotentialTrainer:
             formula_vectors = batch["formula_vectors"]
             baseline_energy = None
             if self.baseline is not None:
-                with torch.no_grad():
-                    baseline_energy = self.baseline(formula_vectors).detach()
+                if self.baseline_trainable and training:
+                    baseline_energy = self.baseline(formula_vectors)
+                else:
+                    with torch.no_grad():
+                        baseline_energy = self.baseline(formula_vectors)
+                    baseline_energy = baseline_energy.detach()
                 target_energy = energies - baseline_energy
             else:
                 target_energy = energies
@@ -541,7 +646,10 @@ class PotentialTrainer:
             if training:
                 loss.backward()
                 if self.config.max_grad_norm is not None:
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+                    params_to_clip = list(self.model.parameters())
+                    if self.baseline is not None and self.baseline_trainable:
+                        params_to_clip += list(self.baseline.parameters())
+                    nn.utils.clip_grad_norm_(params_to_clip, self.config.max_grad_norm)
                 self.optimizer.step()
                 if self.scheduler is not None:
                     self.scheduler.step()
@@ -566,10 +674,53 @@ class PotentialTrainer:
         )
 
     def save_checkpoint(self, path: Path) -> None:
-        torch.save({
+        self._save_checkpoint(path)
+
+    def _checkpoint_state(self) -> Dict[str, object]:
+        state: Dict[str, object] = {
             "model_state": self.model.state_dict(),
             "config": self.config,
-        }, path)
+        }
+        if self.baseline is not None:
+            state["baseline_state"] = self.baseline.state_dict()
+            state["baseline_trainable"] = self.baseline_trainable
+        return state
+
+    def _save_checkpoint(self, path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(self._checkpoint_state(), path)
+        return path
+
+    def _resolve_checkpoint_name(self, filename: str) -> Path:
+        return self.output_dir / filename
+
+    def _update_checkpoints(self, train_loss: float, val_loss: Optional[float]) -> None:
+        monitor = val_loss if val_loss is not None else train_loss
+        if monitor is None:
+            return
+        improved = False
+        if self._best_metric is None or (
+            monitor < self._best_metric - float(self.config.early_stopping_min_delta)
+        ):
+            self._best_metric = monitor
+            self._early_stop_counter = 0
+            if self.config.best_checkpoint_name:
+                path = self._resolve_checkpoint_name(self.config.best_checkpoint_name)
+                self.best_checkpoint_path = self._save_checkpoint(path)
+                _emit_info(
+                    "New best checkpoint saved to %s (loss=%.4f)" % (path, float(monitor))
+                )
+            improved = True
+        if not improved and val_loss is not None and self.config.early_stopping_patience > 0:
+            self._early_stop_counter += 1
+        if self.config.last_checkpoint_name:
+            path = self._resolve_checkpoint_name(self.config.last_checkpoint_name)
+            self.last_checkpoint_path = self._save_checkpoint(path)
+
+    def _should_stop_early(self, val_loss: Optional[float]) -> bool:
+        if val_loss is None or self.config.early_stopping_patience <= 0:
+            return False
+        return self._early_stop_counter >= self.config.early_stopping_patience
 
 
 def train_potential_model(
@@ -578,6 +729,7 @@ def train_potential_model(
     *,
     config: PotentialTrainingConfig,
     baseline: Optional[LinearAtomicBaseline] = None,
+    baseline_requires_grad: bool = True,
 ) -> PotentialTrainer:
     val_size = int(len(dataset) * config.validation_split)
     if val_size > 0:
@@ -598,6 +750,11 @@ def train_potential_model(
         shuffle=True,
         collate_fn=collate_graphs,
     )
-    trainer = PotentialTrainer(model, config, baseline=baseline)
+    trainer = PotentialTrainer(
+        model,
+        config,
+        baseline=baseline,
+        baseline_requires_grad=baseline_requires_grad,
+    )
     trainer.train(train_loader, val_loader=val_loader)
     return trainer

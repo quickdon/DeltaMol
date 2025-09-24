@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from dataclasses import replace
 from pathlib import Path
 from typing import Iterable, Optional
@@ -26,6 +27,10 @@ def run_baseline_training(
     learning_rate: Optional[float] = None,
     validation_split: Optional[float] = None,
     solver: Optional[str] = None,
+    early_stopping_patience: Optional[int] = None,
+    early_stopping_min_delta: Optional[float] = None,
+    best_checkpoint_name: Optional[str] = None,
+    last_checkpoint_name: Optional[str] = None,
     config: TrainingConfig | None = None,
 ) -> None:
     """Train the linear atomic baseline on a dataset."""
@@ -50,6 +55,14 @@ def run_baseline_training(
             batch_size=batch_size if batch_size is not None else 128,
             validation_split=validation_split if validation_split is not None else 0.1,
             solver=solver if solver is not None else "optimizer",
+            early_stopping_patience=(
+                early_stopping_patience if early_stopping_patience is not None else 0
+            ),
+            early_stopping_min_delta=(
+                early_stopping_min_delta if early_stopping_min_delta is not None else 0.0
+            ),
+            best_checkpoint_name=(best_checkpoint_name or "baseline_best.pt"),
+            last_checkpoint_name=(last_checkpoint_name or "baseline_last.pt"),
         )
     else:
         config = replace(
@@ -64,11 +77,49 @@ def run_baseline_training(
                 else config.validation_split
             ),
             solver=solver if solver is not None else config.solver,
+            early_stopping_patience=(
+                early_stopping_patience
+                if early_stopping_patience is not None
+                else config.early_stopping_patience
+            ),
+            early_stopping_min_delta=(
+                early_stopping_min_delta
+                if early_stopping_min_delta is not None
+                else config.early_stopping_min_delta
+            ),
+            best_checkpoint_name=(
+                best_checkpoint_name
+                if best_checkpoint_name is not None
+                else config.best_checkpoint_name
+            ),
+            last_checkpoint_name=(
+                last_checkpoint_name
+                if last_checkpoint_name is not None
+                else config.last_checkpoint_name
+            ),
         )
+        if not config.best_checkpoint_name:
+            config = replace(config, best_checkpoint_name="baseline_best.pt")
+        if not config.last_checkpoint_name:
+            config = replace(config, last_checkpoint_name="baseline_last.pt")
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
+    best_path = trainer.best_checkpoint_path
+    last_path = trainer.last_checkpoint_path
+    if best_path is not None:
+        LOGGER.info("Best baseline checkpoint saved to %s", best_path)
+    if last_path is not None and last_path != best_path:
+        LOGGER.info("Last baseline checkpoint saved to %s", last_path)
+    alias_source = best_path or last_path
     checkpoint_path = output_dir / "baseline.pt"
-    trainer.save_checkpoint(checkpoint_path)
-    LOGGER.info("Saved baseline checkpoint to %s", checkpoint_path)
+    if alias_source is not None:
+        if Path(alias_source).resolve() != checkpoint_path.resolve():
+            shutil.copy2(alias_source, checkpoint_path)
+            LOGGER.info("Copied %s to %s", alias_source, checkpoint_path)
+        else:
+            LOGGER.info("Best baseline checkpoint already stored at %s", checkpoint_path)
+    else:
+        trainer.save_checkpoint(checkpoint_path)
+        LOGGER.info("Saved baseline checkpoint to %s", checkpoint_path)
     try:
         config_path = output_dir / "config.yaml"
         save_config(config, config_path)

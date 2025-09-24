@@ -24,6 +24,7 @@ class BaselineConfig:
 
     checkpoint: Optional[Path] = None
     species: Optional[Tuple[int, ...]] = None
+    requires_grad: bool = True
 
 
 @dataclass

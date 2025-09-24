@@ -4,9 +4,18 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
-from deltamol.training.pipeline import TensorDataset, Trainer, TrainingConfig, train_baseline
+from deltamol.models.baseline import LinearAtomicBaseline, LinearBaselineConfig
+from deltamol.models.potential import PotentialOutput
+from deltamol.training.pipeline import (
+    PotentialTrainer,
+    PotentialTrainingConfig,
+    TensorDataset,
+    Trainer,
+    TrainingConfig,
+    train_baseline,
+)
 
 
 def test_trainer_persists_history(tmp_path):
@@ -36,6 +45,10 @@ def test_trainer_persists_history(tmp_path):
     with history_path.open("r", encoding="utf-8") as handle:
         saved = json.load(handle)
     assert saved == history
+    assert trainer.best_checkpoint_path == tmp_path / config.best_checkpoint_name
+    assert trainer.last_checkpoint_path == tmp_path / config.last_checkpoint_name
+    assert trainer.best_checkpoint_path.exists()
+    assert trainer.last_checkpoint_path.exists()
 
 
 def test_trainer_supports_optimizer_and_scheduler(tmp_path):
@@ -101,3 +114,114 @@ def test_train_baseline_least_squares(tmp_path):
         assert pytest.approx(0.0, abs=1e-8) == trainer.history["val/1"]
     history_path = tmp_path / "history.json"
     assert history_path.exists()
+    assert trainer.best_checkpoint_path == tmp_path / config.best_checkpoint_name
+    assert trainer.last_checkpoint_path == tmp_path / config.last_checkpoint_name
+    assert trainer.best_checkpoint_path.exists()
+    assert trainer.last_checkpoint_path.exists()
+
+
+def test_trainer_early_stopping_and_checkpoints(tmp_path):
+    torch.manual_seed(0)
+    inputs = torch.randn(12, 2)
+    targets = torch.randn(12, 1)
+    dataset = TensorDataset(inputs, targets)
+    loader = DataLoader(dataset, batch_size=4, shuffle=False)
+    val_loader = DataLoader(dataset, batch_size=4, shuffle=False)
+    model = nn.Sequential(nn.Linear(2, 4), nn.ReLU(), nn.Linear(4, 1))
+    config = TrainingConfig(
+        output_dir=tmp_path,
+        epochs=5,
+        learning_rate=0.0,
+        batch_size=4,
+        log_every=1,
+        early_stopping_patience=1,
+        best_checkpoint_name="best.pt",
+        last_checkpoint_name="last.pt",
+    )
+    trainer = Trainer(model, config)
+
+    trainer.train(loader, val_loader=val_loader)
+
+    assert "train/5" not in trainer.history
+    assert trainer.best_checkpoint_path.exists()
+    assert trainer.last_checkpoint_path.exists()
+    assert trainer.best_checkpoint_path == tmp_path / "best.pt"
+    assert trainer.last_checkpoint_path == tmp_path / "last.pt"
+
+
+class _ToyPotentialDataset(Dataset):
+    def __len__(self) -> int:  # pragma: no cover - trivial
+        return 1
+
+    def __getitem__(self, index: int):  # pragma: no cover - trivial
+        return {
+            "energies": torch.tensor([1.0], dtype=torch.float32),
+            "formula_vectors": torch.tensor([[1.0]], dtype=torch.float32),
+            "positions": torch.zeros(1, 1, 3, dtype=torch.float32),
+            "mask": torch.tensor([[1.0]], dtype=torch.float32),
+            "node_indices": torch.tensor([[1]], dtype=torch.long),
+            "adjacency": torch.ones(1, 1, 1, dtype=torch.float32),
+        }
+
+
+class _ZeroPotential(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.offset = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, node_indices, positions, adjacency, mask):  # pragma: no cover - simple
+        batch_size = node_indices.size(0)
+        energy = torch.zeros(batch_size, device=node_indices.device) + self.offset
+        return PotentialOutput(energy=energy)
+
+
+def test_potential_trainer_baseline_requires_grad(tmp_path):
+    dataset = _ToyPotentialDataset()
+    loader = DataLoader(dataset, batch_size=1, collate_fn=lambda batch: batch[0])
+    baseline_config = LinearBaselineConfig(species=(1,))
+
+    trainable_dir = tmp_path / "trainable"
+    trainable_config = PotentialTrainingConfig(
+        output_dir=trainable_dir,
+        epochs=1,
+        learning_rate=0.1,
+        batch_size=1,
+        validation_split=0.0,
+    )
+    baseline = LinearAtomicBaseline(baseline_config)
+    baseline.linear.weight.data.zero_()
+    trainer = PotentialTrainer(
+        _ZeroPotential(),
+        trainable_config,
+        baseline=baseline,
+        baseline_requires_grad=True,
+    )
+    trainer.train(loader)
+    assert not torch.allclose(
+        baseline.linear.weight.detach(), torch.zeros_like(baseline.linear.weight)
+    )
+    assert trainer.best_checkpoint_path == trainable_dir / trainable_config.best_checkpoint_name
+    assert trainer.last_checkpoint_path == trainable_dir / trainable_config.last_checkpoint_name
+    assert trainer.best_checkpoint_path.exists()
+    assert trainer.last_checkpoint_path.exists()
+
+    frozen_dir = tmp_path / "frozen"
+    frozen_config = PotentialTrainingConfig(
+        output_dir=frozen_dir,
+        epochs=1,
+        learning_rate=0.1,
+        batch_size=1,
+        validation_split=0.0,
+    )
+    frozen_baseline = LinearAtomicBaseline(baseline_config)
+    frozen_baseline.linear.weight.data.zero_()
+    trainer_frozen = PotentialTrainer(
+        _ZeroPotential(),
+        frozen_config,
+        baseline=frozen_baseline,
+        baseline_requires_grad=False,
+    )
+    trainer_frozen.train(loader)
+    assert torch.allclose(
+        frozen_baseline.linear.weight.detach(), torch.zeros_like(frozen_baseline.linear.weight)
+    )

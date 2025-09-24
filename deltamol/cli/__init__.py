@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence, Tuple
@@ -76,9 +77,11 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
     raise ValueError(f"Unsupported potential model '{model_cfg.name}'")
 
 
-def _load_baseline(baseline_cfg: Optional[BaselineConfig], species: Sequence[int]):
+def _load_baseline(
+    baseline_cfg: Optional[BaselineConfig], species: Sequence[int]
+) -> Tuple[Optional[LinearAtomicBaseline], bool]:
     if baseline_cfg is None or baseline_cfg.checkpoint is None:
-        return None
+        return None, True
     resolved_species = tuple(
         int(z) for z in (baseline_cfg.species if baseline_cfg.species else species)
     )
@@ -89,7 +92,7 @@ def _load_baseline(baseline_cfg: Optional[BaselineConfig], species: Sequence[int
     else:
         state_dict = checkpoint
     model.load_state_dict(state_dict)
-    return model
+    return model, bool(baseline_cfg.requires_grad)
 
 
 def _train_baseline(args: argparse.Namespace) -> None:
@@ -102,6 +105,10 @@ def _train_baseline(args: argparse.Namespace) -> None:
         learning_rate=args.lr,
         validation_split=args.validation_split,
         solver=args.solver,
+        early_stopping_patience=args.early_stopping_patience,
+        early_stopping_min_delta=args.early_stopping_min_delta,
+        best_checkpoint_name=args.best_checkpoint_name,
+        last_checkpoint_name=args.last_checkpoint_name,
         config=config,
     )
 
@@ -143,18 +150,35 @@ def _train_potential(args: argparse.Namespace) -> None:
     configure_logging(training_cfg.output_dir)
     LOGGER.info("Training potential model using dataset at %s", dataset_path)
     model = _build_potential_model(experiment.model, species)
-    baseline = _load_baseline(experiment.baseline, species)
+    baseline, baseline_trainable = _load_baseline(experiment.baseline, species)
     if baseline is not None and experiment.baseline is not None:
         LOGGER.info("Loaded baseline checkpoint from %s", experiment.baseline.checkpoint)
+        if not baseline_trainable:
+            LOGGER.info("Baseline parameters will remain frozen during potential training")
     trainer = train_potential_model(
         graph_dataset,
         model,
         config=training_cfg,
         baseline=baseline,
+        baseline_requires_grad=baseline_trainable,
     )
     checkpoint_path = training_cfg.output_dir / "potential.pt"
-    trainer.save_checkpoint(checkpoint_path)
-    LOGGER.info("Saved potential checkpoint to %s", checkpoint_path)
+    best_path = trainer.best_checkpoint_path
+    last_path = trainer.last_checkpoint_path
+    if best_path is not None:
+        LOGGER.info("Best potential checkpoint saved to %s", best_path)
+    if last_path is not None and last_path != best_path:
+        LOGGER.info("Last potential checkpoint saved to %s", last_path)
+    alias_source = last_path or best_path
+    if alias_source is not None:
+        if Path(alias_source).resolve() != checkpoint_path.resolve():
+            shutil.copy2(alias_source, checkpoint_path)
+            LOGGER.info("Copied %s to %s", alias_source, checkpoint_path)
+        else:
+            LOGGER.info("Best potential checkpoint already stored at %s", checkpoint_path)
+    else:
+        trainer.save_checkpoint(checkpoint_path)
+        LOGGER.info("Saved potential checkpoint to %s", checkpoint_path)
     resolved_dataset_cfg = replace(experiment.dataset, path=dataset_path, species=species)
     resolved_model_cfg = replace(experiment.model)
     resolved_baseline_cfg = (
@@ -216,6 +240,30 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["optimizer", "least_squares"],
         default=None,
         help="Solver for the baseline weights (default: optimizer)",
+    )
+    train_parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=None,
+        help="Stop training after N epochs without validation improvement",
+    )
+    train_parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=None,
+        help="Minimum change in validation loss to count as an improvement",
+    )
+    train_parser.add_argument(
+        "--best-checkpoint-name",
+        type=str,
+        default=None,
+        help="Filename for the best baseline checkpoint (default: baseline_best.pt)",
+    )
+    train_parser.add_argument(
+        "--last-checkpoint-name",
+        type=str,
+        default=None,
+        help="Filename for the most recent baseline checkpoint (default: baseline_last.pt)",
     )
     train_parser.set_defaults(func=_train_baseline)
 
