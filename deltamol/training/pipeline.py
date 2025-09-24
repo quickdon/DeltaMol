@@ -884,6 +884,19 @@ def train_baseline(
     baseline_config = LinearBaselineConfig(species=tuple(species))
     model = LinearAtomicBaseline(baseline_config)
     solver = getattr(config, "solver", "optimizer").lower()
+    if solver in {"least_squares", "ols", "linear_regression"}:
+        if config.device.lower() != "cpu":
+            _emit_info(
+                "Least squares solver requested; overriding device '%s' with CPU"
+                % config.device
+            )
+            config.device = "cpu"
+        if getattr(config, "mixed_precision", False):
+            _emit_info("Disabling mixed precision for least squares solver")
+            config.mixed_precision = False
+        if config.tensorboard:
+            _emit_info("TensorBoard logging disabled for least squares solver")
+            config.tensorboard = False
     trainer = Trainer(model, config)
     if solver in {"least_squares", "ols", "linear_regression"}:
         if trainer.distributed.enabled and trainer.distributed.world_size > 1:
