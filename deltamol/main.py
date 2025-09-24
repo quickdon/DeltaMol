@@ -13,6 +13,7 @@ from .config.manager import save_config
 from .data.io import load_npz_dataset
 from .models.baseline import build_formula_vector
 from .training.pipeline import TrainingConfig, train_baseline
+from .utils import is_main_process
 from .utils.logging import configure_logging
 
 LOGGER = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ def run_baseline_training(
     *,
     epochs: Optional[int] = None,
     batch_size: Optional[int] = None,
+    update_frequency: Optional[int] = None,
+    num_workers: Optional[int] = None,
     learning_rate: Optional[float] = None,
     validation_split: Optional[float] = None,
     solver: Optional[str] = None,
@@ -41,11 +44,12 @@ def run_baseline_training(
     configure_logging(output_dir)
     dataset = load_npz_dataset(dataset_path)
     species = sorted({int(z) for atoms in dataset.atoms for z in atoms})
-    LOGGER.info(
-        "Starting baseline training on %d molecules with %d species",
-        len(dataset.energies),
-        len(species),
-    )
+    if is_main_process():
+        LOGGER.info(
+            "Starting baseline training on %d molecules with %d species",
+            len(dataset.energies),
+            len(species),
+        )
     formula_vectors = torch.stack(
         [build_formula_vector(atoms, species=species) for atoms in dataset.atoms]
     )
@@ -57,12 +61,18 @@ def run_baseline_training(
         override_kwargs["autocast_dtype"] = autocast_dtype
     if grad_scaler is not None:
         override_kwargs["grad_scaler"] = grad_scaler
+    if update_frequency is not None:
+        override_kwargs["update_frequency"] = update_frequency
+    if num_workers is not None:
+        override_kwargs["num_workers"] = num_workers
     if config is None:
         config = TrainingConfig(
             output_dir=output_dir,
             epochs=epochs if epochs is not None else 200,
             learning_rate=learning_rate if learning_rate is not None else 1e-2,
             batch_size=batch_size if batch_size is not None else 128,
+            update_frequency=update_frequency if update_frequency is not None else 1,
+            num_workers=num_workers if num_workers is not None else 0,
             validation_split=validation_split if validation_split is not None else 0.1,
             solver=solver if solver is not None else "optimizer",
             early_stopping_patience=(
@@ -82,6 +92,10 @@ def run_baseline_training(
             epochs=epochs if epochs is not None else config.epochs,
             learning_rate=learning_rate if learning_rate is not None else config.learning_rate,
             batch_size=batch_size if batch_size is not None else config.batch_size,
+            update_frequency=(
+                update_frequency if update_frequency is not None else config.update_frequency
+            ),
+            num_workers=num_workers if num_workers is not None else config.num_workers,
             validation_split=(
                 validation_split
                 if validation_split is not None
@@ -115,29 +129,30 @@ def run_baseline_training(
         if not config.last_checkpoint_name:
             config = replace(config, last_checkpoint_name="baseline_last.pt")
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
-    best_path = trainer.best_checkpoint_path
-    last_path = trainer.last_checkpoint_path
-    if best_path is not None:
-        LOGGER.info("Best baseline checkpoint saved to %s", best_path)
-    if last_path is not None and last_path != best_path:
-        LOGGER.info("Last baseline checkpoint saved to %s", last_path)
-    alias_source = best_path or last_path
-    checkpoint_path = output_dir / "baseline.pt"
-    if alias_source is not None:
-        if Path(alias_source).resolve() != checkpoint_path.resolve():
-            shutil.copy2(alias_source, checkpoint_path)
-            LOGGER.info("Copied %s to %s", alias_source, checkpoint_path)
+    if trainer.distributed.is_main_process():
+        best_path = trainer.best_checkpoint_path
+        last_path = trainer.last_checkpoint_path
+        if best_path is not None:
+            LOGGER.info("Best baseline checkpoint saved to %s", best_path)
+        if last_path is not None and last_path != best_path:
+            LOGGER.info("Last baseline checkpoint saved to %s", last_path)
+        alias_source = best_path or last_path
+        checkpoint_path = output_dir / "baseline.pt"
+        if alias_source is not None:
+            if Path(alias_source).resolve() != checkpoint_path.resolve():
+                shutil.copy2(alias_source, checkpoint_path)
+                LOGGER.info("Copied %s to %s", alias_source, checkpoint_path)
+            else:
+                LOGGER.info("Best baseline checkpoint already stored at %s", checkpoint_path)
         else:
-            LOGGER.info("Best baseline checkpoint already stored at %s", checkpoint_path)
-    else:
-        trainer.save_checkpoint(checkpoint_path)
-        LOGGER.info("Saved baseline checkpoint to %s", checkpoint_path)
-    try:
-        config_path = output_dir / "config.yaml"
-        save_config(config, config_path)
-        LOGGER.info("Saved training configuration to %s", config_path)
-    except ImportError as exc:
-        LOGGER.warning("Skipping config serialization: %s", exc)
+            trainer.save_checkpoint(checkpoint_path)
+            LOGGER.info("Saved baseline checkpoint to %s", checkpoint_path)
+        try:
+            config_path = output_dir / "config.yaml"
+            save_config(config, config_path)
+            LOGGER.info("Saved training configuration to %s", config_path)
+        except ImportError as exc:
+            LOGGER.warning("Skipping config serialization: %s", exc)
 
 
 def main(argv: Iterable[str] | None = None) -> None:

@@ -115,6 +115,13 @@ CPUs fall back to bfloat16; override the behaviour with `--precision-dtype` and
 use `--no-grad-scaler` to disable gradient scaling for edge cases that require
 manual control.
 
+Large batch experiments can also rely on gradient accumulation via
+`--update-frequency`. Gradients are accumulated for the requested number of
+mini-batches before a single optimiser update is applied, effectively running
+with a global batch size of ``batch_size × world_size × update_frequency`` when
+distributed training is enabled. Combine the flag with `--num-workers` to spin
+up multi-process data loading on both CPU and GPU hosts.
+
 ### Potential training with configuration files
 
 The `train-potential` subcommand consumes a structured YAML file that describes
@@ -167,6 +174,32 @@ and resume from the final optimiser state with minimal effort. Mixed precision
 can be toggled directly in the YAML file via the `mixed_precision`,
 `autocast_dtype`, and `grad_scaler` fields or overridden on the CLI with
 `--mixed-precision`, `--precision-dtype`, and `--no-grad-scaler`.
+
+Distributed training is fully supported: launch the CLI with `torchrun` (for
+example `torchrun --nproc_per_node=4 python -m deltamol.main train-potential ...`)
+to perform single-node multi-GPU optimisation, or combine `--nproc_per_node`
+with `--nnodes` to scale across machines. The trainer automatically detects the
+world size, keeps logging confined to the designated main process, and averages
+metrics across ranks. Advanced settings such as backend selection, explicit
+`WORLD_SIZE`, or a fixed main-process rank can be expressed inside the training
+configuration via the nested `distributed` block:
+
+```yaml
+training:
+  output_dir: runs/potential-transformer
+  batch_size: 16
+  update_frequency: 4
+  num_workers: 8
+  distributed:
+    enabled: true
+    backend: nccl
+    main_process: 0
+```
+
+With this configuration each optimiser step sees the equivalent of
+``16 × 4 × 4 = 256`` samples on a four-GPU node. The same `update_frequency`
+and `num_workers` controls are available on the baseline CLI, and the trainer
+automatically freezes logging and checkpoint writes on non-main ranks.
 
 ### Descriptor caching
 

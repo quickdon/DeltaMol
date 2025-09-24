@@ -83,6 +83,31 @@ def test_trainer_supports_optimizer_and_scheduler(tmp_path):
     assert lr_keys, "learning rate history should be recorded when scheduler is active"
 
 
+def test_trainer_gradient_accumulation(tmp_path):
+    torch.manual_seed(2)
+    inputs = torch.randn(20, 3)
+    weights = torch.tensor([[1.0], [-2.0], [0.5]])
+    targets = inputs @ weights
+    dataset = TensorDataset(inputs, targets)
+    loader = DataLoader(dataset, batch_size=2, shuffle=False)
+    model = nn.Sequential(nn.Linear(3, 16), nn.ReLU(), nn.Linear(16, 1))
+    config = TrainingConfig(
+        output_dir=tmp_path,
+        epochs=4,
+        learning_rate=5e-2,
+        batch_size=2,
+        update_frequency=2,
+        log_every=1,
+    )
+    trainer = Trainer(model, config)
+
+    history = trainer.train(loader)
+
+    final_loss = history[f"train/{config.epochs}"]
+    assert final_loss < 1.0
+    assert trainer._update_frequency == 2
+
+
 def test_trainer_enables_mixed_precision_cpu(tmp_path):
     torch.manual_seed(0)
     inputs = torch.randn(8, 3)

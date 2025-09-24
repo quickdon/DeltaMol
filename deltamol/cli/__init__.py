@@ -29,6 +29,7 @@ from ..models import (
 from ..training.configs import BaselineConfig, ModelConfig, PotentialExperimentConfig
 from ..training.datasets import MolecularGraphDataset
 from ..training.pipeline import TrainingConfig, train_potential_model
+from ..utils import is_main_process
 from ..utils.logging import configure_logging
 
 _DESCRIPTOR_BUILDERS: Dict[str, Callable] = {
@@ -113,6 +114,8 @@ def _train_baseline(args: argparse.Namespace) -> None:
         mixed_precision=True if args.mixed_precision else None,
         autocast_dtype=args.precision_dtype,
         grad_scaler=grad_scaler,
+        update_frequency=args.update_frequency,
+        num_workers=args.num_workers,
         config=config,
     )
 
@@ -139,6 +142,10 @@ def _train_potential(args: argparse.Namespace) -> None:
         overrides["epochs"] = args.epochs
     if args.batch_size is not None:
         overrides["batch_size"] = args.batch_size
+    if args.update_frequency is not None:
+        overrides["update_frequency"] = args.update_frequency
+    if args.num_workers is not None:
+        overrides["num_workers"] = args.num_workers
     if args.lr is not None:
         overrides["learning_rate"] = args.lr
     if args.validation_split is not None:
@@ -158,10 +165,15 @@ def _train_potential(args: argparse.Namespace) -> None:
     if training_cfg.output_dir is None:
         raise ValueError("Potential training configuration must define an output directory")
     configure_logging(training_cfg.output_dir)
-    LOGGER.info("Training potential model using dataset at %s", dataset_path)
+    if is_main_process():
+        LOGGER.info("Training potential model using dataset at %s", dataset_path)
     model = _build_potential_model(experiment.model, species)
     baseline, baseline_trainable = _load_baseline(experiment.baseline, species)
-    if baseline is not None and experiment.baseline is not None:
+    if (
+        baseline is not None
+        and experiment.baseline is not None
+        and is_main_process()
+    ):
         LOGGER.info("Loaded baseline checkpoint from %s", experiment.baseline.checkpoint)
         if not baseline_trainable:
             LOGGER.info("Baseline parameters will remain frozen during potential training")
@@ -172,39 +184,40 @@ def _train_potential(args: argparse.Namespace) -> None:
         baseline=baseline,
         baseline_requires_grad=baseline_trainable,
     )
-    checkpoint_path = training_cfg.output_dir / "potential.pt"
-    best_path = trainer.best_checkpoint_path
-    last_path = trainer.last_checkpoint_path
-    if best_path is not None:
-        LOGGER.info("Best potential checkpoint saved to %s", best_path)
-    if last_path is not None and last_path != best_path:
-        LOGGER.info("Last potential checkpoint saved to %s", last_path)
-    alias_source = last_path or best_path
-    if alias_source is not None:
-        if Path(alias_source).resolve() != checkpoint_path.resolve():
-            shutil.copy2(alias_source, checkpoint_path)
-            LOGGER.info("Copied %s to %s", alias_source, checkpoint_path)
+    if trainer.distributed.is_main_process():
+        checkpoint_path = training_cfg.output_dir / "potential.pt"
+        best_path = trainer.best_checkpoint_path
+        last_path = trainer.last_checkpoint_path
+        if best_path is not None:
+            LOGGER.info("Best potential checkpoint saved to %s", best_path)
+        if last_path is not None and last_path != best_path:
+            LOGGER.info("Last potential checkpoint saved to %s", last_path)
+        alias_source = last_path or best_path
+        if alias_source is not None:
+            if Path(alias_source).resolve() != checkpoint_path.resolve():
+                shutil.copy2(alias_source, checkpoint_path)
+                LOGGER.info("Copied %s to %s", alias_source, checkpoint_path)
+            else:
+                LOGGER.info("Best potential checkpoint already stored at %s", checkpoint_path)
         else:
-            LOGGER.info("Best potential checkpoint already stored at %s", checkpoint_path)
-    else:
-        trainer.save_checkpoint(checkpoint_path)
-        LOGGER.info("Saved potential checkpoint to %s", checkpoint_path)
-    resolved_dataset_cfg = replace(experiment.dataset, path=dataset_path, species=species)
-    resolved_model_cfg = replace(experiment.model)
-    resolved_baseline_cfg = (
-        replace(experiment.baseline, species=tuple(experiment.baseline.species or species))
-        if experiment.baseline is not None
-        else None
-    )
-    resolved_experiment = PotentialExperimentConfig(
-        training=training_cfg,
-        model=resolved_model_cfg,
-        dataset=resolved_dataset_cfg,
-        baseline=resolved_baseline_cfg,
-    )
-    config_path = training_cfg.output_dir / "experiment.yaml"
-    save_config(resolved_experiment, config_path)
-    LOGGER.info("Saved experiment configuration to %s", config_path)
+            trainer.save_checkpoint(checkpoint_path)
+            LOGGER.info("Saved potential checkpoint to %s", checkpoint_path)
+        resolved_dataset_cfg = replace(experiment.dataset, path=dataset_path, species=species)
+        resolved_model_cfg = replace(experiment.model)
+        resolved_baseline_cfg = (
+            replace(experiment.baseline, species=tuple(experiment.baseline.species or species))
+            if experiment.baseline is not None
+            else None
+        )
+        resolved_experiment = PotentialExperimentConfig(
+            training=training_cfg,
+            model=resolved_model_cfg,
+            dataset=resolved_dataset_cfg,
+            baseline=resolved_baseline_cfg,
+        )
+        config_path = training_cfg.output_dir / "experiment.yaml"
+        save_config(resolved_experiment, config_path)
+        LOGGER.info("Saved experiment configuration to %s", config_path)
 
 
 def _cache_descriptors(args: argparse.Namespace) -> None:
@@ -238,6 +251,18 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--config", type=Path, help="YAML file with training overrides")
     train_parser.add_argument("--epochs", type=int, default=None, help="Number of epochs (default: 200)")
     train_parser.add_argument("--batch-size", type=int, default=None, help="Batch size (default: 128)")
+    train_parser.add_argument(
+        "--update-frequency",
+        type=int,
+        default=None,
+        help="Accumulate gradients over N batches before stepping the optimizer",
+    )
+    train_parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="Number of DataLoader workers (default: 0)",
+    )
     train_parser.add_argument("--lr", type=float, default=None, help="Learning rate (default: 1e-2)")
     train_parser.add_argument(
         "--mixed-precision",
@@ -317,6 +342,18 @@ def build_parser() -> argparse.ArgumentParser:
     potential_parser.add_argument("--epochs", type=int, default=None, help="Override epochs")
     potential_parser.add_argument(
         "--batch-size", type=int, default=None, help="Override batch size"
+    )
+    potential_parser.add_argument(
+        "--update-frequency",
+        type=int,
+        default=None,
+        help="Accumulate gradients for N batches before each optimizer step",
+    )
+    potential_parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="Number of DataLoader workers to use (default: 0)",
     )
     potential_parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
     potential_parser.add_argument(
