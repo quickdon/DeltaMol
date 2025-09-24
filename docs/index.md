@@ -20,6 +20,15 @@ surfaces by embracing three core ideas:
 4. Plug the cached descriptors into graph/transformer models (under active
    development).
 
+## Reproducibility
+
+The training utilities seed Python, NumPy, and Torch when a ``seed`` value is
+provided via the CLI or configuration files. Data splits, dataloader shuffles,
+and parameter initialisation are therefore deterministic across distributed
+runs. Choose from standard initialisation schemes (Xavier, Kaiming, orthogonal,
+zeros) with the ``parameter_init`` option when constructing either baseline or
+potential models.
+
 ## Roadmap
 
 * Formalize the energy correction graph network and expose a high level trainer.
