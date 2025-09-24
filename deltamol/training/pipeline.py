@@ -6,7 +6,9 @@ import logging
 import math
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
+from time import perf_counter
 from typing import Dict, Optional, Sequence, Tuple
 
 import torch
@@ -45,6 +47,35 @@ def _emit_info(message: str) -> None:
     LOGGER.info(message)
     if not (LOGGER.hasHandlers() and LOGGER.isEnabledFor(logging.INFO)):
         print(message)
+
+
+def _describe_device(device: torch.device) -> str:
+    """Return a human readable representation of a torch device."""
+
+    if device.type == "cuda":
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        try:  # pragma: no cover - defensive against runtime CUDA issues
+            name = torch.cuda.get_device_name(index)
+        except Exception:  # pragma: no cover - fallback when querying fails
+            name = "CUDA device"
+        return f"cuda:{index} ({name})"
+    if device.type == "mps":
+        return "mps (Metal Performance Shaders)"
+    return str(device)
+
+
+def _format_int(value: int) -> str:
+    """Format an integer with thousands separators."""
+
+    return f"{value:,}"
+
+
+def _format_lrs(optimizer: Optimizer) -> str:
+    """Format the learning rates of all parameter groups."""
+
+    if not optimizer.param_groups:
+        return "n/a"
+    return "/".join(f"{group['lr']:.6g}" for group in optimizer.param_groups)
 
 
 def _save_history(output_dir: Path, history: Dict[str, float]) -> Path:
@@ -348,6 +379,35 @@ class Trainer:
         self._best_metric: Optional[float] = None
         self._early_stop_counter = 0
         self._update_frequency = max(int(self.config.update_frequency), 1)
+        self._global_batches = 0
+        self._optimizer_steps = 0
+        device_msg = f"Initialised trainer on {_describe_device(self.device)}"
+        if self.distributed.enabled:
+            device_msg += (
+                f" | rank={self.distributed.rank} of {self.distributed.world_size}"
+            )
+        _emit_info(device_msg)
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        _emit_info(
+            "Model parameter counts | total=%s, trainable=%s"
+            % (_format_int(total_params), _format_int(trainable_params))
+        )
+        schedule_name = self.config.scheduler if self.config.scheduler else "none"
+        amp_state = "enabled" if self._amp_enabled else "disabled"
+        _emit_info(
+            "Hyperparameters | epochs=%d, batch_size=%d, lr=%g, update_freq=%d, "
+            "optimizer=%s, scheduler=%s, mixed_precision=%s"
+            % (
+                self.config.epochs,
+                self.config.batch_size,
+                self.config.learning_rate,
+                self._update_frequency,
+                self.config.optimizer,
+                schedule_name,
+                amp_state,
+            )
+        )
 
     def _resolve_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -368,6 +428,15 @@ class Trainer:
         history: Dict[str, float] = {}
         train_samples = len(getattr(dataloader, "dataset", []))
         val_samples = len(getattr(val_loader, "dataset", [])) if val_loader is not None else 0
+        _emit_info(
+            "Dataloader setup | train_workers=%d, val_workers=%d"
+            % (
+                getattr(dataloader, "num_workers", getattr(dataloader, "_num_workers", 0)),
+                getattr(val_loader, "num_workers", getattr(val_loader, "_num_workers", 0))
+                if val_loader is not None
+                else 0,
+            )
+        )
         try:
             steps_per_epoch = len(dataloader)
         except TypeError:
@@ -393,16 +462,22 @@ class Trainer:
         if effective_batch != self.config.batch_size:
             summary += f", effective batch={effective_batch}"
         _emit_info(summary)
+        _emit_info("Entering training loop")
+        start_time = perf_counter()
+        last_train_loss = math.nan
+        last_val_loss: Optional[float] = None
         log_interval = max(int(self.config.log_every), 1)
         for epoch in range(1, self.config.epochs + 1):
             if train_sampler is not None and hasattr(train_sampler, "set_epoch"):
                 train_sampler.set_epoch(epoch)
-            train_loss = self._run_epoch(dataloader, training=True)
+            train_loss = self._run_epoch(dataloader, training=True, epoch=epoch)
             history[f"train/{epoch}"] = train_loss
+            last_train_loss = train_loss
             val_loss: Optional[float] = None
             if val_loader is not None:
-                val_loss = self._run_epoch(val_loader, training=False)
+                val_loss = self._run_epoch(val_loader, training=False, epoch=epoch)
                 history[f"val/{epoch}"] = val_loss
+                last_val_loss = val_loss
             if epoch == 1 or epoch == self.config.epochs or epoch % log_interval == 0:
                 message = f"Epoch {epoch:03d} | train: {train_loss:.4f}"
                 if val_loss is not None:
@@ -420,9 +495,22 @@ class Trainer:
                 break
         self.history = history
         _save_history(self.output_dir, history)
+        elapsed = perf_counter() - start_time
+        duration = timedelta(seconds=float(elapsed))
+        final_message = (
+            "Training completed in %s | final train loss=%.4f"
+            % (duration, last_train_loss if not math.isnan(last_train_loss) else float("nan"))
+        )
+        if last_val_loss is not None:
+            final_message += f", final val loss={last_val_loss:.4f}"
+        _emit_info(final_message)
+        if self.best_checkpoint_path is not None:
+            _emit_info(f"Best checkpoint: {self.best_checkpoint_path}")
+        if self.last_checkpoint_path is not None:
+            _emit_info(f"Last checkpoint: {self.last_checkpoint_path}")
         return history
 
-    def _run_epoch(self, dataloader: DataLoader, *, training: bool) -> float:
+    def _run_epoch(self, dataloader: DataLoader, *, training: bool, epoch: int) -> float:
         module = self.ddp_model if self.ddp_model is not None else self.model
         module.train(mode=training)
         total_loss = 0.0
@@ -433,9 +521,11 @@ class Trainer:
         except TypeError:
             total_batches = None
         for step, batch in enumerate(dataloader, start=1):
+            batch_start = perf_counter()
             inputs, targets = batch
             inputs = inputs.to(self.device)
             targets = targets.to(self.device)
+            batch_size = int(targets.shape[0]) if hasattr(targets, "shape") else len(targets)
             if training and ((step - 1) % self._update_frequency == 0):
                 self.optimizer.zero_grad(set_to_none=True)
             with _autocast_context(
@@ -447,6 +537,7 @@ class Trainer:
             loss = raw_loss
             if training and self._update_frequency > 1:
                 loss = loss / float(self._update_frequency)
+            optimizer_step = False
             if training:
                 if self.scaler is not None:
                     scaled_loss = self.scaler.scale(loss)
@@ -460,8 +551,28 @@ class Trainer:
                 if should_step:
                     self._apply_optimizer_step()
                     pending_update = False
+                    optimizer_step = True
+                self._global_batches += 1
             total_loss += loss_value
             n_batches += 1
+            batch_time = perf_counter() - batch_start
+            lr_message = _format_lrs(self.optimizer)
+            accum_step = (step - 1) % self._update_frequency + 1
+            total_batches_str = f"/{total_batches:04d}" if total_batches is not None else ""
+            phase = "train" if training else "eval"
+            message = (
+                f"[Epoch {epoch:03d}][{phase}][Batch {step:04d}{total_batches_str}] "
+                f"loss={loss_value:.4f}, lr={lr_message}, batch_size={batch_size}, "
+                f"time={batch_time:.3f}s"
+            )
+            if training:
+                message += (
+                    f", accum={accum_step}/{self._update_frequency}, "
+                    f"optimizer_steps={self._optimizer_steps}, "
+                    f"global_batch={self._global_batches}"
+                )
+                message += ", optimizer_step=yes" if optimizer_step else ", optimizer_step=no"
+            _emit_info(message)
         if training and pending_update:
             self._apply_optimizer_step()
         reduce_device = self.device if self.device.type == "cuda" else torch.device("cpu")
@@ -483,6 +594,7 @@ class Trainer:
             self.optimizer.step()
         if self.scheduler is not None:
             self.scheduler.step()
+        self._optimizer_steps += 1
 
     def save_checkpoint(self, path: Path) -> None:
         if self.distributed.is_main_process():
@@ -753,6 +865,45 @@ class PotentialTrainer:
         else:
             self.scaler = None
         self._update_frequency = max(int(self.config.update_frequency), 1)
+        self._global_batches = 0
+        self._optimizer_steps = 0
+        device_msg = f"Initialised potential trainer on {_describe_device(self.device)}"
+        if self.distributed.enabled:
+            device_msg += (
+                f" | rank={self.distributed.rank} of {self.distributed.world_size}"
+            )
+        _emit_info(device_msg)
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        _emit_info(
+            "Potential model parameters | total=%s, trainable=%s"
+            % (_format_int(total_params), _format_int(trainable_params))
+        )
+        if self.baseline is not None:
+            baseline_total = sum(p.numel() for p in self.baseline.parameters())
+            baseline_trainable = sum(
+                p.numel() for p in self.baseline.parameters() if p.requires_grad
+            )
+            mode = "trainable" if self.baseline_trainable else "frozen"
+            _emit_info(
+                "Baseline parameters (%s) | total=%s, trainable=%s"
+                % (mode, _format_int(baseline_total), _format_int(baseline_trainable))
+            )
+        schedule_name = self.config.scheduler if self.config.scheduler else "none"
+        amp_state = "enabled" if self._amp_enabled else "disabled"
+        _emit_info(
+            "Hyperparameters | epochs=%d, batch_size=%d, lr=%g, update_freq=%d, "
+            "optimizer=%s, scheduler=%s, mixed_precision=%s"
+            % (
+                self.config.epochs,
+                self.config.batch_size,
+                self.config.learning_rate,
+                self._update_frequency,
+                self.config.optimizer,
+                schedule_name,
+                amp_state,
+            )
+        )
 
     def _resolve_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -773,6 +924,15 @@ class PotentialTrainer:
         history: Dict[str, float] = {}
         train_samples = len(getattr(dataloader, "dataset", []))
         val_samples = len(getattr(val_loader, "dataset", [])) if val_loader is not None else 0
+        _emit_info(
+            "Dataloader setup | train_workers=%d, val_workers=%d"
+            % (
+                getattr(dataloader, "num_workers", getattr(dataloader, "_num_workers", 0)),
+                getattr(val_loader, "num_workers", getattr(val_loader, "_num_workers", 0))
+                if val_loader is not None
+                else 0,
+            )
+        )
         summary = (
             f"Starting potential training for {self.config.epochs} epochs on {train_samples} samples"
         )
@@ -808,16 +968,22 @@ class PotentialTrainer:
         if details:
             summary += " (" + ", ".join(details) + ")"
         _emit_info(summary)
+        _emit_info("Entering training loop")
+        start_time = perf_counter()
+        last_train_metrics: Dict[str, float] = {}
+        last_val_metrics: Optional[Dict[str, float]] = None
         log_interval = max(int(self.config.log_every), 1)
         for epoch in range(1, self.config.epochs + 1):
             if train_sampler is not None and hasattr(train_sampler, "set_epoch"):
                 train_sampler.set_epoch(epoch)
-            train_metrics = self._run_epoch(dataloader, training=True)
+            train_metrics = self._run_epoch(dataloader, training=True, epoch=epoch)
             history[f"train/{epoch}"] = train_metrics["loss"]
+            last_train_metrics = train_metrics
             val_metrics: Optional[Dict[str, float]] = None
             if val_loader is not None:
-                val_metrics = self._run_epoch(val_loader, training=False)
+                val_metrics = self._run_epoch(val_loader, training=False, epoch=epoch)
                 history[f"val/{epoch}"] = val_metrics["loss"]
+                last_val_metrics = val_metrics
             if epoch == 1 or epoch == self.config.epochs or epoch % log_interval == 0:
                 message = f"Epoch {epoch:03d} | train: {train_metrics['loss']:.4f}"
                 if val_metrics is not None:
@@ -838,9 +1004,26 @@ class PotentialTrainer:
                 break
         self.history = history
         _save_history(self.output_dir, history)
+        elapsed = perf_counter() - start_time
+        duration = timedelta(seconds=float(elapsed))
+        summary_msg = (
+            "Training completed in %s | final train loss=%.4f"
+            % (duration, last_train_metrics.get("loss", float("nan")))
+        )
+        if last_val_metrics is not None:
+            summary_msg += f", final val loss={last_val_metrics['loss']:.4f}"
+        if "energy_loss" in last_train_metrics:
+            summary_msg += f", energy_loss={last_train_metrics['energy_loss']:.4f}"
+        if "force_loss" in last_train_metrics:
+            summary_msg += f", force_loss={last_train_metrics['force_loss']:.4f}"
+        _emit_info(summary_msg)
+        if self.best_checkpoint_path is not None:
+            _emit_info(f"Best checkpoint: {self.best_checkpoint_path}")
+        if self.last_checkpoint_path is not None:
+            _emit_info(f"Last checkpoint: {self.last_checkpoint_path}")
         return history
 
-    def _run_epoch(self, dataloader: DataLoader, *, training: bool) -> Dict[str, float]:
+    def _run_epoch(self, dataloader: DataLoader, *, training: bool, epoch: int) -> Dict[str, float]:
         module = self.ddp_model if self.ddp_model is not None else self.model
         module.train(mode=training)
         if self.baseline is not None:
@@ -858,6 +1041,7 @@ class PotentialTrainer:
         except TypeError:
             total_batches = None
         for step, batch in enumerate(dataloader, start=1):
+            batch_start = perf_counter()
             batch = {
                 key: value.to(self.device) for key, value in batch.items() if isinstance(value, torch.Tensor)
             }
@@ -916,6 +1100,7 @@ class PotentialTrainer:
             loss = raw_loss
             if training and self._update_frequency > 1:
                 loss = loss / float(self._update_frequency)
+            optimizer_step = False
             if training:
                 if self.scaler is not None:
                     scaled_loss = self.scaler.scale(loss)
@@ -929,10 +1114,33 @@ class PotentialTrainer:
                 if should_step:
                     self._apply_optimizer_step()
                     pending_update = False
+                    optimizer_step = True
+                self._global_batches += 1
             total_loss += loss_value
             total_energy_loss += energy_loss_value
             total_force_loss += force_loss_value
             n_batches += 1
+            batch_time = perf_counter() - batch_start
+            lr_message = _format_lrs(self.optimizer)
+            accum_step = (step - 1) % self._update_frequency + 1
+            total_batches_str = f"/{total_batches:04d}" if total_batches is not None else ""
+            phase = "train" if training else "eval"
+            batch_size = int(energies.shape[0])
+            message = (
+                f"[Epoch {epoch:03d}][{phase}][Batch {step:04d}{total_batches_str}] "
+                f"loss={loss_value:.4f}, energy_loss={energy_loss_value:.4f}, "
+                f"lr={lr_message}, batch_size={batch_size}, time={batch_time:.3f}s"
+            )
+            if self.config.force_weight > 0.0:
+                message += f", force_loss={force_loss_value:.4f}"
+            if training:
+                message += (
+                    f", accum={accum_step}/{self._update_frequency}, "
+                    f"optimizer_steps={self._optimizer_steps}, "
+                    f"global_batch={self._global_batches}"
+                )
+                message += ", optimizer_step=yes" if optimizer_step else ", optimizer_step=no"
+            _emit_info(message)
         if training and pending_update:
             self._apply_optimizer_step()
         reduce_device = self.device if self.device.type == "cuda" else torch.device("cpu")
@@ -969,6 +1177,7 @@ class PotentialTrainer:
             self.optimizer.step()
         if self.scheduler is not None:
             self.scheduler.step()
+        self._optimizer_steps += 1
 
     def _forward_model(self, batch: Dict[str, torch.Tensor]) -> PotentialOutput:
         args = (
