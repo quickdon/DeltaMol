@@ -254,7 +254,7 @@ class TrainingConfig:
     epochs: int = 100
     learning_rate: float = 1e-3
     batch_size: int = 32
-    log_every: int = 10
+    log_every: int = 1
     device: str = "auto"
     mixed_precision: bool = False
     autocast_dtype: str = "float16"
