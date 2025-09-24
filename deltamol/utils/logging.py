@@ -15,4 +15,5 @@ def configure_logging(output_dir: Path, level: int = logging.INFO) -> None:
             logging.FileHandler(log_path),
             logging.StreamHandler(),
         ],
+        force=True,
     )
