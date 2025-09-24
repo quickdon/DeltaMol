@@ -115,9 +115,6 @@ def _train_baseline(args: argparse.Namespace) -> None:
         grad_scaler=grad_scaler,
         config=config,
     )
-    config_path = training_cfg.output_dir / "experiment.yaml"
-    save_config(resolved_experiment, config_path)
-    LOGGER.info("Saved experiment configuration to %s", config_path)
 
 
 def _train_potential(args: argparse.Namespace) -> None:
