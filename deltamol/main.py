@@ -31,6 +31,9 @@ def run_baseline_training(
     early_stopping_min_delta: Optional[float] = None,
     best_checkpoint_name: Optional[str] = None,
     last_checkpoint_name: Optional[str] = None,
+    mixed_precision: Optional[bool] = None,
+    autocast_dtype: Optional[str] = None,
+    grad_scaler: Optional[bool] = None,
     config: TrainingConfig | None = None,
 ) -> None:
     """Train the linear atomic baseline on a dataset."""
@@ -47,6 +50,13 @@ def run_baseline_training(
         [build_formula_vector(atoms, species=species) for atoms in dataset.atoms]
     )
     energies = torch.tensor(dataset.energies, dtype=torch.float32)
+    override_kwargs = {}
+    if mixed_precision is not None:
+        override_kwargs["mixed_precision"] = mixed_precision
+    if autocast_dtype is not None:
+        override_kwargs["autocast_dtype"] = autocast_dtype
+    if grad_scaler is not None:
+        override_kwargs["grad_scaler"] = grad_scaler
     if config is None:
         config = TrainingConfig(
             output_dir=output_dir,
@@ -63,6 +73,7 @@ def run_baseline_training(
             ),
             best_checkpoint_name=(best_checkpoint_name or "baseline_best.pt"),
             last_checkpoint_name=(last_checkpoint_name or "baseline_last.pt"),
+            **override_kwargs,
         )
     else:
         config = replace(
@@ -97,6 +108,7 @@ def run_baseline_training(
                 if last_checkpoint_name is not None
                 else config.last_checkpoint_name
             ),
+            **override_kwargs,
         )
         if not config.best_checkpoint_name:
             config = replace(config, best_checkpoint_name="baseline_best.pt")

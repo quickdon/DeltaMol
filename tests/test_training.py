@@ -83,6 +83,47 @@ def test_trainer_supports_optimizer_and_scheduler(tmp_path):
     assert lr_keys, "learning rate history should be recorded when scheduler is active"
 
 
+def test_trainer_enables_mixed_precision_cpu(tmp_path):
+    torch.manual_seed(0)
+    inputs = torch.randn(8, 3)
+    targets = torch.randn(8, 1)
+    dataset = TensorDataset(inputs, targets)
+    loader = DataLoader(dataset, batch_size=4, shuffle=False)
+
+    class _AutocastRecorder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = nn.Sequential(nn.Linear(3, 8), nn.ReLU(), nn.Linear(8, 1))
+            self.output_dtypes = []
+            self.autocast_states = []
+
+        def forward(self, x):
+            out = self.model(x)
+            self.output_dtypes.append(out.dtype)
+            try:
+                state = torch.is_autocast_enabled(x.device.type)
+            except TypeError:  # pragma: no cover - compatibility fallback
+                state = torch.is_autocast_enabled()
+            self.autocast_states.append(state)
+            return out
+
+    model = _AutocastRecorder()
+    config = TrainingConfig(
+        output_dir=tmp_path,
+        epochs=1,
+        batch_size=4,
+        mixed_precision=True,
+        autocast_dtype="bfloat16",
+    )
+    trainer = Trainer(model, config)
+
+    trainer.train(loader)
+
+    assert torch.bfloat16 in model.output_dtypes
+    assert any(model.autocast_states)
+    assert trainer.scaler is None
+
+
 def test_train_baseline_least_squares(tmp_path):
     torch.manual_seed(0)
     formula_vectors = torch.tensor(
@@ -225,3 +266,43 @@ def test_potential_trainer_baseline_requires_grad(tmp_path):
     assert torch.allclose(
         frozen_baseline.linear.weight.detach(), torch.zeros_like(frozen_baseline.linear.weight)
     )
+
+
+def test_potential_trainer_mixed_precision_cpu(tmp_path):
+    dataset = _ToyPotentialDataset()
+    loader = DataLoader(dataset, batch_size=1, collate_fn=lambda batch: batch[0])
+
+    class _AutocastPotential(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = nn.Linear(1, 1)
+            self.recorded_dtypes = []
+            self.autocast_states = []
+
+        def forward(self, node_indices, positions, adjacency, mask):
+            pooled = mask.sum(dim=1, keepdim=True)
+            energy = self.linear(pooled).squeeze(-1)
+            self.recorded_dtypes.append(energy.dtype)
+            try:
+                state = torch.is_autocast_enabled(energy.device.type)
+            except TypeError:  # pragma: no cover - compatibility fallback
+                state = torch.is_autocast_enabled()
+            self.autocast_states.append(state)
+            return PotentialOutput(energy=energy)
+
+    model = _AutocastPotential()
+    config = PotentialTrainingConfig(
+        output_dir=tmp_path,
+        epochs=1,
+        batch_size=1,
+        validation_split=0.0,
+        mixed_precision=True,
+        autocast_dtype="bfloat16",
+    )
+    trainer = PotentialTrainer(model, config)
+
+    trainer.train(loader)
+
+    assert torch.bfloat16 in model.recorded_dtypes
+    assert any(model.autocast_states)
+    assert trainer.scaler is None

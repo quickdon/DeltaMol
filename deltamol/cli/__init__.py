@@ -97,6 +97,7 @@ def _load_baseline(
 
 def _train_baseline(args: argparse.Namespace) -> None:
     config = load_config(args.config, TrainingConfig) if args.config else None
+    grad_scaler = False if args.no_grad_scaler else None
     run_baseline_training(
         args.dataset,
         args.output,
@@ -109,8 +110,14 @@ def _train_baseline(args: argparse.Namespace) -> None:
         early_stopping_min_delta=args.early_stopping_min_delta,
         best_checkpoint_name=args.best_checkpoint_name,
         last_checkpoint_name=args.last_checkpoint_name,
+        mixed_precision=True if args.mixed_precision else None,
+        autocast_dtype=args.precision_dtype,
+        grad_scaler=grad_scaler,
         config=config,
     )
+    config_path = training_cfg.output_dir / "experiment.yaml"
+    save_config(resolved_experiment, config_path)
+    LOGGER.info("Saved experiment configuration to %s", config_path)
 
 
 def _train_potential(args: argparse.Namespace) -> None:
@@ -139,6 +146,12 @@ def _train_potential(args: argparse.Namespace) -> None:
         overrides["learning_rate"] = args.lr
     if args.validation_split is not None:
         overrides["validation_split"] = args.validation_split
+    if args.mixed_precision:
+        overrides["mixed_precision"] = True
+    if args.precision_dtype is not None:
+        overrides["autocast_dtype"] = args.precision_dtype
+    if args.no_grad_scaler:
+        overrides["grad_scaler"] = False
     if overrides:
         if "output_dir" in overrides and not isinstance(overrides["output_dir"], Path):
             overrides["output_dir"] = Path(overrides["output_dir"])
@@ -230,6 +243,22 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--batch-size", type=int, default=None, help="Batch size (default: 128)")
     train_parser.add_argument("--lr", type=float, default=None, help="Learning rate (default: 1e-2)")
     train_parser.add_argument(
+        "--mixed-precision",
+        action="store_true",
+        help="Enable automatic mixed precision during baseline optimisation",
+    )
+    train_parser.add_argument(
+        "--precision-dtype",
+        choices=["float16", "bfloat16", "fp16", "bf16"],
+        default=None,
+        help="Autocast dtype for mixed precision (default: float16 on CUDA, bfloat16 on CPU)",
+    )
+    train_parser.add_argument(
+        "--no-grad-scaler",
+        action="store_true",
+        help="Disable gradient scaling when mixed precision is enabled",
+    )
+    train_parser.add_argument(
         "--validation-split",
         type=float,
         default=None,
@@ -298,6 +327,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Override validation split",
+    )
+    potential_parser.add_argument(
+        "--mixed-precision",
+        action="store_true",
+        help="Enable automatic mixed precision for potential training",
+    )
+    potential_parser.add_argument(
+        "--precision-dtype",
+        choices=["float16", "bfloat16", "fp16", "bf16"],
+        default=None,
+        help="Autocast dtype for mixed precision (default: float16 on CUDA, bfloat16 on CPU)",
+    )
+    potential_parser.add_argument(
+        "--no-grad-scaler",
+        action="store_true",
+        help="Disable gradient scaling during mixed precision runs",
     )
     potential_parser.set_defaults(func=_train_potential)
 

@@ -109,6 +109,12 @@ not suit your workflow. The CLI mirrors these values inside the saved
 `config.yaml` so downstream tasks can discover which files contain the best and
 latest weights.
 
+When GPU memory is at a premium you can add `--mixed-precision` to enable
+automatic mixed precision. CUDA devices default to float16 autocasting while
+CPUs fall back to bfloat16; override the behaviour with `--precision-dtype` and
+use `--no-grad-scaler` to disable gradient scaling for edge cases that require
+manual control.
+
 ### Potential training with configuration files
 
 The `train-potential` subcommand consumes a structured YAML file that describes
@@ -139,6 +145,8 @@ training:
   scheduler: cosine
   warmup_steps: 1000
   force_weight: 0.5
+  mixed_precision: true
+  autocast_dtype: float16
 baseline:
   checkpoint: runs/baseline/baseline.pt
   requires_grad: false
@@ -155,7 +163,10 @@ experiment, and persist an `experiment.yaml` file in the output directory that
 captures the resolved dataset, model, and training parameters. In addition to
 the copied `potential.pt` convenience file, the run directory will contain
 `potential_best.pt` and `potential_last.pt` so you can evaluate the best model
-and resume from the final optimiser state with minimal effort.
+and resume from the final optimiser state with minimal effort. Mixed precision
+can be toggled directly in the YAML file via the `mixed_precision`,
+`autocast_dtype`, and `grad_scaler` fields or overridden on the CLI with
+`--mixed-precision`, `--precision-dtype`, and `--no-grad-scaler`.
 
 ### Descriptor caching
 

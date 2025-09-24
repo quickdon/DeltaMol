@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 import logging
 import math
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Dict, Optional, Sequence, Tuple
 
 import torch
 from torch import nn
@@ -18,6 +19,21 @@ from ..models.potential import PotentialOutput
 from .datasets import MolecularGraphDataset, collate_graphs
 
 LOGGER = logging.getLogger(__name__)
+
+
+try:  # pragma: no cover - torch<2.0 fallback
+    from torch.amp import GradScaler as _GradScalerBase
+except ImportError:  # pragma: no cover - legacy path
+    from torch.cuda.amp import GradScaler as _GradScalerBase  # type: ignore[attr-defined]
+
+
+def _make_grad_scaler(enabled: bool) -> _GradScalerBase:
+    """Instantiate a :class:`GradScaler` handling old and new signatures."""
+
+    try:
+        return _GradScalerBase(device_type="cuda", enabled=enabled)  # type: ignore[call-arg]
+    except TypeError:  # pragma: no cover - torch<2.0 signature
+        return _GradScalerBase(enabled=enabled)
 
 
 def _emit_info(message: str) -> None:
@@ -36,6 +52,59 @@ def _save_history(output_dir: Path, history: Dict[str, float]) -> Path:
         json.dump(history, handle, indent=2)
     _emit_info(f"Saved training history to {history_path}")
     return history_path
+
+
+def _resolve_autocast_settings(
+    device: torch.device, config: "TrainingConfig"
+) -> Tuple[bool, Optional[str], Optional[torch.dtype], bool]:
+    """Determine whether autocast should be enabled for the trainer."""
+
+    if not getattr(config, "mixed_precision", False):
+        return False, None, None, False
+    device_type = device.type
+    dtype_name = str(getattr(config, "autocast_dtype", None) or "float16").lower()
+    if device_type == "cuda":
+        mapping = {
+            "float16": torch.float16,
+            "fp16": torch.float16,
+            "half": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "bf16": torch.bfloat16,
+        }
+        if dtype_name not in mapping:
+            raise ValueError(f"Unsupported autocast dtype '{dtype_name}' for CUDA mixed precision")
+        dtype = mapping[dtype_name]
+        scaler_enabled = bool(getattr(config, "grad_scaler", True)) and dtype == torch.float16
+        return True, device_type, dtype, scaler_enabled
+    if device_type == "cpu":
+        mapping = {
+            "bfloat16": torch.bfloat16,
+            "bf16": torch.bfloat16,
+            "float16": torch.bfloat16,
+            "fp16": torch.bfloat16,
+            "half": torch.bfloat16,
+        }
+        dtype = mapping.get(dtype_name)
+        if dtype is None:
+            raise ValueError(f"Unsupported autocast dtype '{dtype_name}' for CPU mixed precision")
+        if dtype_name not in {"bfloat16", "bf16"}:
+            _emit_info(
+                "CPU mixed precision only supports bfloat16; falling back to bfloat16 autocast."
+            )
+        return True, device_type, torch.bfloat16, False
+    _emit_info(
+        "Mixed precision requested on device type '%s', but autocast is not supported; disabling mixed precision."
+        % device_type
+    )
+    return False, None, None, False
+
+
+def _autocast_context(
+    enabled: bool, device_type: Optional[str], dtype: Optional[torch.dtype]
+):
+    if not enabled or device_type is None or dtype is None:
+        return nullcontext()
+    return torch.autocast(device_type=device_type, dtype=dtype)
 
 
 class WarmupDecayScheduler:
@@ -187,6 +256,9 @@ class TrainingConfig:
     batch_size: int = 32
     log_every: int = 1
     device: str = "auto"
+    mixed_precision: bool = False
+    autocast_dtype: str = "float16"
+    grad_scaler: bool = True
     validation_split: float = 0.1
     optimizer: str = "adam"
     weight_decay: float = 0.0
@@ -218,6 +290,17 @@ class Trainer:
         self.device = self._resolve_device(config.device)
         self.model.to(self.device)
         self.optimizer = _build_optimizer(self.model.parameters(), config)
+        (
+            self._amp_enabled,
+            self._autocast_device,
+            self._autocast_dtype,
+            scaler_enabled,
+        ) = _resolve_autocast_settings(self.device, config)
+        self.scaler: Optional[_GradScalerBase]
+        if self._amp_enabled and self._autocast_device == "cuda":
+            self.scaler = _make_grad_scaler(enabled=scaler_enabled)
+        else:
+            self.scaler = None
         self.scheduler: Optional[WarmupDecayScheduler] = None
         self.criterion = nn.MSELoss()
         self.output_dir = config.output_dir
@@ -291,12 +374,21 @@ class Trainer:
             inputs = inputs.to(self.device)
             targets = targets.to(self.device)
             if training:
-                self.optimizer.zero_grad()
-            outputs = self.model(inputs)
-            loss = self.criterion(outputs, targets)
+                self.optimizer.zero_grad(set_to_none=True)
+            with _autocast_context(
+                self._amp_enabled, self._autocast_device, self._autocast_dtype
+            ):
+                outputs = self.model(inputs)
+                loss = self.criterion(outputs, targets)
             if training:
-                loss.backward()
-                self.optimizer.step()
+                if self.scaler is not None:
+                    scaled_loss = self.scaler.scale(loss)
+                    scaled_loss.backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    self.optimizer.step()
                 if self.scheduler is not None:
                     self.scheduler.step()
             total_loss += loss.item()
@@ -517,6 +609,17 @@ class PotentialTrainer:
                 for param in self.baseline.parameters():
                     param.requires_grad_(False)
         self.optimizer = _build_optimizer(parameters, config)
+        (
+            self._amp_enabled,
+            self._autocast_device,
+            self._autocast_dtype,
+            scaler_enabled,
+        ) = _resolve_autocast_settings(self.device, config)
+        self.scaler: Optional[_GradScalerBase]
+        if self._amp_enabled and self._autocast_device == "cuda":
+            self.scaler = _make_grad_scaler(enabled=scaler_enabled)
+        else:
+            self.scaler = None
 
     def _resolve_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -600,17 +703,6 @@ class PotentialTrainer:
             batch = {key: value.to(self.device) for key, value in batch.items() if isinstance(value, torch.Tensor)}
             energies = batch["energies"]
             formula_vectors = batch["formula_vectors"]
-            baseline_energy = None
-            if self.baseline is not None:
-                if self.baseline_trainable and training:
-                    baseline_energy = self.baseline(formula_vectors)
-                else:
-                    with torch.no_grad():
-                        baseline_energy = self.baseline(formula_vectors)
-                    baseline_energy = baseline_energy.detach()
-                target_energy = energies - baseline_energy
-            else:
-                target_energy = energies
             requires_force_grad = (
                 self.config.force_weight > 0.0
                 and not self.config.predict_forces_directly
@@ -620,37 +712,64 @@ class PotentialTrainer:
             if requires_force_grad:
                 positions = positions.clone().detach().requires_grad_(True)
                 batch["positions"] = positions
-            self.optimizer.zero_grad(set_to_none=True)
-            with torch.set_grad_enabled(training or requires_force_grad):
-                output = self._forward_model(batch)
-                energy_pred = output.energy
-                energy_loss = self.energy_loss(energy_pred, target_energy)
-                loss = self.config.energy_weight * energy_loss
-                force_loss_value = torch.tensor(0.0, device=self.device)
-                if batch.get("forces") is not None and self.config.force_weight > 0.0:
-                    if output.forces is not None and self.config.predict_forces_directly:
-                        predicted_forces = output.forces
-                    else:
-                        grads = torch.autograd.grad(
-                            energy_pred.sum(),
-                            positions,
-                            create_graph=training,
-                            retain_graph=training,
-                        )[0]
-                        predicted_forces = -grads
-                    mask = batch["mask"].unsqueeze(-1)
-                    target_forces = batch["forces"] * mask
-                    predicted_forces = predicted_forces * mask
-                    force_loss_value = self.force_loss(predicted_forces, target_forces)
-                    loss = loss + self.config.force_weight * force_loss_value
             if training:
-                loss.backward()
-                if self.config.max_grad_norm is not None:
-                    params_to_clip = list(self.model.parameters())
-                    if self.baseline is not None and self.baseline_trainable:
-                        params_to_clip += list(self.baseline.parameters())
-                    nn.utils.clip_grad_norm_(params_to_clip, self.config.max_grad_norm)
-                self.optimizer.step()
+                self.optimizer.zero_grad(set_to_none=True)
+            force_loss_value = torch.tensor(0.0, device=self.device)
+            with torch.set_grad_enabled(training or requires_force_grad):
+                with _autocast_context(
+                    self._amp_enabled, self._autocast_device, self._autocast_dtype
+                ):
+                    baseline_energy = None
+                    if self.baseline is not None:
+                        baseline_training = self.baseline_trainable and training
+                        baseline_ctx = nullcontext() if baseline_training else torch.no_grad()
+                        with baseline_ctx:
+                            baseline_energy = self.baseline(formula_vectors)
+                        if baseline_energy is not None and not baseline_training:
+                            baseline_energy = baseline_energy.detach()
+                        target_energy = energies - baseline_energy
+                    else:
+                        target_energy = energies
+                    output = self._forward_model(batch)
+                    energy_pred = output.energy
+                    energy_loss = self.energy_loss(energy_pred, target_energy)
+                    loss = self.config.energy_weight * energy_loss
+                    if batch.get("forces") is not None and self.config.force_weight > 0.0:
+                        if output.forces is not None and self.config.predict_forces_directly:
+                            predicted_forces = output.forces
+                        else:
+                            grads = torch.autograd.grad(
+                                energy_pred.sum(),
+                                positions,
+                                create_graph=training,
+                                retain_graph=training,
+                            )[0]
+                            predicted_forces = -grads
+                        mask = batch["mask"].unsqueeze(-1)
+                        target_forces = batch["forces"] * mask
+                        predicted_forces = predicted_forces * mask
+                        force_loss_value = self.force_loss(predicted_forces, target_forces)
+                        loss = loss + self.config.force_weight * force_loss_value
+            if training:
+                if self.scaler is not None:
+                    scaled_loss = self.scaler.scale(loss)
+                    scaled_loss.backward()
+                    if self.config.max_grad_norm is not None:
+                        self.scaler.unscale_(self.optimizer)
+                        params_to_clip = list(self.model.parameters())
+                        if self.baseline is not None and self.baseline_trainable:
+                            params_to_clip += list(self.baseline.parameters())
+                        nn.utils.clip_grad_norm_(params_to_clip, self.config.max_grad_norm)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    if self.config.max_grad_norm is not None:
+                        params_to_clip = list(self.model.parameters())
+                        if self.baseline is not None and self.baseline_trainable:
+                            params_to_clip += list(self.baseline.parameters())
+                        nn.utils.clip_grad_norm_(params_to_clip, self.config.max_grad_norm)
+                    self.optimizer.step()
                 if self.scheduler is not None:
                     self.scheduler.step()
             total_loss += loss.item()
