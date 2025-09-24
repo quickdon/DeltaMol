@@ -99,6 +99,9 @@ def _load_baseline(
 def _train_baseline(args: argparse.Namespace) -> None:
     config = load_config(args.config, TrainingConfig) if args.config else None
     grad_scaler = False if args.no_grad_scaler else None
+    parameter_init = None
+    if args.parameter_init and args.parameter_init.lower() not in {"default", "none"}:
+        parameter_init = args.parameter_init
     run_baseline_training(
         args.dataset,
         args.output,
@@ -118,8 +121,121 @@ def _train_baseline(args: argparse.Namespace) -> None:
         num_workers=args.num_workers,
         log_every_steps=args.log_every_steps,
         tensorboard=False if args.no_tensorboard else None,
+        seed=args.seed,
+        parameter_init=parameter_init,
         config=config,
     )
+
+
+def _train_potential(args: argparse.Namespace) -> None:
+    experiment = load_config(args.config, PotentialExperimentConfig)
+    dataset_path = args.dataset or experiment.dataset.path
+    if dataset_path is None:
+        raise ValueError("A dataset path must be provided via the CLI or configuration file")
+    dataset_path = Path(dataset_path)
+    dataset = load_npz_dataset(dataset_path)
+    species = _resolve_species(dataset, experiment.dataset.species)
+    graph_dataset = MolecularGraphDataset(
+        dataset,
+        species=species,
+        cutoff=experiment.dataset.cutoff,
+        dtype=experiment.dataset.dtype,
+    )
+    training_cfg = experiment.training
+    overrides = {}
+    if args.output is not None:
+        overrides["output_dir"] = args.output
+    if args.epochs is not None:
+        overrides["epochs"] = args.epochs
+    if args.batch_size is not None:
+        overrides["batch_size"] = args.batch_size
+    if args.update_frequency is not None:
+        overrides["update_frequency"] = args.update_frequency
+    if args.num_workers is not None:
+        overrides["num_workers"] = args.num_workers
+    if args.lr is not None:
+        overrides["learning_rate"] = args.lr
+    if args.validation_split is not None:
+        overrides["validation_split"] = args.validation_split
+    if args.mixed_precision:
+        overrides["mixed_precision"] = True
+    if args.precision_dtype is not None:
+        overrides["autocast_dtype"] = args.precision_dtype
+    if args.no_grad_scaler:
+        overrides["grad_scaler"] = False
+    if args.log_every_steps is not None:
+        overrides["log_every_steps"] = args.log_every_steps
+    if args.no_tensorboard:
+        overrides["tensorboard"] = False
+    if args.seed is not None:
+        overrides["seed"] = args.seed
+    if args.parameter_init is not None:
+        if args.parameter_init.lower() in {"default", "none"}:
+            overrides["parameter_init"] = None
+        else:
+            overrides["parameter_init"] = args.parameter_init
+    if overrides:
+        if "output_dir" in overrides and not isinstance(overrides["output_dir"], Path):
+            overrides["output_dir"] = Path(overrides["output_dir"])
+        training_cfg = replace(training_cfg, **overrides)
+    elif not isinstance(training_cfg.output_dir, Path):
+        training_cfg = replace(training_cfg, output_dir=Path(training_cfg.output_dir))
+    if training_cfg.output_dir is None:
+        raise ValueError("Potential training configuration must define an output directory")
+    configure_logging(training_cfg.output_dir)
+    if is_main_process():
+        LOGGER.info("Training potential model using dataset at %s", dataset_path)
+    model = _build_potential_model(experiment.model, species)
+    baseline, baseline_trainable = _load_baseline(experiment.baseline, species)
+    if (
+        baseline is not None
+        and experiment.baseline is not None
+        and is_main_process()
+    ):
+        LOGGER.info("Loaded baseline checkpoint from %s", experiment.baseline.checkpoint)
+        if not baseline_trainable:
+            LOGGER.info("Baseline parameters will remain frozen during potential training")
+    trainer = train_potential_model(
+        graph_dataset,
+        model,
+        config=training_cfg,
+        baseline=baseline,
+        baseline_requires_grad=baseline_trainable,
+    )
+    if trainer.distributed.is_main_process():
+        checkpoint_path = training_cfg.output_dir / "potential.pt"
+        best_path = trainer.best_checkpoint_path
+        last_path = trainer.last_checkpoint_path
+        if best_path is not None:
+            LOGGER.info("Best potential checkpoint saved to %s", best_path)
+        if last_path is not None and last_path != best_path:
+            LOGGER.info("Last potential checkpoint saved to %s", last_path)
+        alias_source = last_path or best_path
+        if alias_source is not None:
+            if Path(alias_source).resolve() != checkpoint_path.resolve():
+                shutil.copy2(alias_source, checkpoint_path)
+                LOGGER.info("Copied %s to %s", alias_source, checkpoint_path)
+            else:
+                LOGGER.info("Best potential checkpoint already stored at %s", checkpoint_path)
+        else:
+            trainer.save_checkpoint(checkpoint_path)
+            LOGGER.info("Saved potential checkpoint to %s", checkpoint_path)
+        resolved_dataset_cfg = replace(experiment.dataset, path=dataset_path, species=species)
+        resolved_model_cfg = replace(experiment.model)
+        resolved_baseline_cfg = (
+            replace(experiment.baseline, species=tuple(experiment.baseline.species or species))
+            if experiment.baseline is not None
+            else None
+        )
+        resolved_experiment = PotentialExperimentConfig(
+            training=training_cfg,
+            model=resolved_model_cfg,
+            dataset=resolved_dataset_cfg,
+            baseline=resolved_baseline_cfg,
+        )
+        config_path = training_cfg.output_dir / "experiment.yaml"
+        save_config(resolved_experiment, config_path)
+        LOGGER.info("Saved experiment configuration to %s", config_path)
 
 
 def _train_potential(args: argparse.Namespace) -> None:
@@ -292,6 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Validation fraction (default: 0.1)",
     )
+    train_parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     train_parser.add_argument(
         "--solver",
         choices=["optimizer", "least_squares"],
@@ -320,6 +437,20 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Minimum change in validation loss to count as an improvement",
+    )
+    train_parser.add_argument(
+        "--parameter-init",
+        choices=[
+            "default",
+            "xavier_uniform",
+            "xavier_normal",
+            "kaiming_uniform",
+            "kaiming_normal",
+            "orthogonal",
+            "zeros",
+        ],
+        default="default",
+        help="Initialisation strategy for trainable parameters",
     )
     train_parser.add_argument(
         "--best-checkpoint-name",
@@ -380,6 +511,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override validation split",
     )
     potential_parser.add_argument(
+        "--seed", type=int, default=None, help="Random seed for reproducible runs"
+    )
+    potential_parser.add_argument(
         "--mixed-precision",
         action="store_true",
         help="Enable automatic mixed precision for potential training",
@@ -405,6 +539,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-tensorboard",
         action="store_true",
         help="Disable TensorBoard logging for potential training",
+    )
+    potential_parser.add_argument(
+        "--parameter-init",
+        choices=[
+            "default",
+            "xavier_uniform",
+            "xavier_normal",
+            "kaiming_uniform",
+            "kaiming_normal",
+            "orthogonal",
+            "zeros",
+        ],
+        default="default",
+        help="Initialisation strategy for the potential weights",
     )
     potential_parser.set_defaults(func=_train_potential)
 

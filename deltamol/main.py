@@ -39,6 +39,8 @@ def run_baseline_training(
     grad_scaler: Optional[bool] = None,
     log_every_steps: Optional[int] = None,
     tensorboard: Optional[bool] = None,
+    seed: Optional[int] = None,
+    parameter_init: Optional[str] = None,
     config: TrainingConfig | None = None,
 ) -> None:
     """Train the linear atomic baseline on a dataset."""
@@ -71,6 +73,10 @@ def run_baseline_training(
         override_kwargs["log_every_steps"] = log_every_steps
     if tensorboard is not None:
         override_kwargs["tensorboard"] = tensorboard
+    if seed is not None:
+        override_kwargs["seed"] = seed
+    if parameter_init is not None:
+        override_kwargs["parameter_init"] = parameter_init
     if config is None:
         config = TrainingConfig(
             output_dir=output_dir,
@@ -89,6 +95,8 @@ def run_baseline_training(
             ),
             best_checkpoint_name=(best_checkpoint_name or "baseline_best.pt"),
             last_checkpoint_name=(last_checkpoint_name or "baseline_last.pt"),
+            seed=seed if seed is not None else None,
+            parameter_init=parameter_init,
             **override_kwargs,
         )
     else:
@@ -127,6 +135,10 @@ def run_baseline_training(
                 last_checkpoint_name
                 if last_checkpoint_name is not None
                 else config.last_checkpoint_name
+            ),
+            seed=seed if seed is not None else config.seed,
+            parameter_init=(
+                parameter_init if parameter_init is not None else config.parameter_init
             ),
             **override_kwargs,
         )

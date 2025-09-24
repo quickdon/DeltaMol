@@ -47,6 +47,23 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+If you prefer Conda, create an environment with:
+
+```bash
+conda create -n deltamol python=3.10
+conda activate deltamol
+pip install -r requirements.txt
+```
+
+The toolkit also ships standard packaging metadata so it can be installed as a
+library from a source checkout:
+
+```bash
+pip install .
+# or, for development
+pip install -e .[dev]
+```
+
 Optional descriptor backends (``dscribe`` and ``qmllib``) can be installed using
 `pip install .[descriptors]`.
 
@@ -122,6 +139,12 @@ with a global batch size of ``batch_size × world_size × update_frequency`` whe
 distributed training is enabled. Combine the flag with `--num-workers` to spin
 up multi-process data loading on both CPU and GPU hosts.
 
+Reproducible runs can set `--seed` to initialise Python, NumPy, and Torch RNGs
+on every rank. The trainers also expose deterministic parameter initialisation
+via `--parameter-init`, supporting schemes such as `xavier_uniform`,
+`xavier_normal`, `kaiming_uniform`, `kaiming_normal`, `orthogonal`, and `zeros`
+in addition to the default PyTorch initialisers.
+
 Use `--log-every-steps` to control how often batch-level metrics are printed to
 the terminal (the default is every 100 steps). Every epoch summary reports its
 elapsed time and both the training and validation losses. Runs also emit
@@ -188,6 +211,10 @@ TensorBoard event generation via `--no-tensorboard` when desired. Each run
 writes train/validation energy and force loss curves, along with the learning
 rate and epoch durations, to ``<output>/tensorboard`` for convenient monitoring
 in TensorBoard.
+
+Potential experiments honour the same `seed` and `parameter_init` options so
+multi-rank training stays reproducible and model initialisation is fully
+controlled from the configuration file or CLI overrides.
 
 Distributed training is fully supported: launch the CLI with `torchrun` (for
 example `torchrun --nproc_per_node=4 python -m deltamol.main train-potential ...`)

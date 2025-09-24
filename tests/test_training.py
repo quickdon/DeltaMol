@@ -197,6 +197,55 @@ def test_train_baseline_least_squares(tmp_path):
     assert trainer.last_checkpoint_path.exists()
 
 
+def test_training_seed_reproducibility(tmp_path):
+    formula_vectors = torch.tensor(
+        [
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [2.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    target_weights = torch.tensor([1.25, -0.5], dtype=torch.float32)
+    energies = formula_vectors @ target_weights + 0.1
+    base_kwargs = dict(
+        epochs=5,
+        learning_rate=5e-2,
+        batch_size=2,
+        seed=123,
+        tensorboard=False,
+        parameter_init="xavier_uniform",
+    )
+    config_a = TrainingConfig(output_dir=tmp_path / "run_a", **base_kwargs)
+    config_b = TrainingConfig(output_dir=tmp_path / "run_b", **base_kwargs)
+    trainer_a = train_baseline(formula_vectors, energies, species=[1, 6], config=config_a)
+    trainer_b = train_baseline(formula_vectors, energies, species=[1, 6], config=config_b)
+    assert torch.allclose(
+        trainer_a.model.linear.weight, trainer_b.model.linear.weight, atol=1e-6
+    )
+    history_a = {k: v for k, v in trainer_a.history.items() if not k.startswith("time/")}
+    history_b = {k: v for k, v in trainer_b.history.items() if not k.startswith("time/")}
+    assert history_a == history_b
+
+
+def test_parameter_initialisation_applied(tmp_path):
+    layer = nn.Linear(4, 3)
+    layer.weight.data.fill_(0.5)
+    layer.bias.data.fill_(0.1)
+    config = TrainingConfig(
+        output_dir=tmp_path,
+        epochs=1,
+        batch_size=2,
+        parameter_init="zeros",
+        tensorboard=False,
+    )
+    trainer = Trainer(layer, config)
+    assert torch.allclose(trainer.model.weight, torch.zeros_like(trainer.model.weight))
+    if trainer.model.bias is not None:
+        assert torch.allclose(trainer.model.bias, torch.zeros_like(trainer.model.bias))
+
+
 def test_trainer_early_stopping_and_checkpoints(tmp_path):
     torch.manual_seed(0)
     inputs = torch.randn(12, 2)

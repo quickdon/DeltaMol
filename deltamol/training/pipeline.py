@@ -9,12 +9,18 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Callable, Dict, Optional, Sequence, Tuple
 
 import torch
 from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset, random_split
+from torch.nn import init as nn_init
+
+try:  # pragma: no cover - optional dependency import guard
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:  # pragma: no cover - tensorboard may be unavailable
+    SummaryWriter = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency import guard
     from torch.utils.tensorboard import SummaryWriter
@@ -25,6 +31,7 @@ from ..models.baseline import LinearAtomicBaseline, LinearBaselineConfig
 from ..models.potential import PotentialOutput
 from .datasets import MolecularGraphDataset, collate_graphs
 from ..utils.distributed import DistributedConfig, DistributedState, init_distributed, is_main_process
+from ..utils.random import seed_everything, seed_worker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -145,6 +152,65 @@ def _autocast_context(
     if not enabled or device_type is None or dtype is None:
         return nullcontext()
     return torch.autocast(device_type=device_type, dtype=dtype)
+
+
+def _initialise_parameters(module: nn.Module, strategy: Optional[str]) -> None:
+    """Apply the requested parameter initialisation scheme to ``module``."""
+
+    if not strategy:
+        return
+    strategy = strategy.lower()
+    if strategy in {"default", "none"}:
+        return
+    supported = {
+        "xavier_uniform",
+        "xavier_normal",
+        "kaiming_uniform",
+        "kaiming_normal",
+        "orthogonal",
+        "zeros",
+    }
+    if strategy not in supported:
+        raise ValueError(f"Unsupported parameter initialisation '{strategy}'")
+
+    def initialise_module(submodule: nn.Module) -> None:
+        if isinstance(submodule, (nn.Linear, nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+            weight = submodule.weight
+            if strategy == "xavier_uniform":
+                nn_init.xavier_uniform_(weight)
+            elif strategy == "xavier_normal":
+                nn_init.xavier_normal_(weight)
+            elif strategy == "kaiming_uniform":
+                nn_init.kaiming_uniform_(weight, nonlinearity="relu")
+            elif strategy == "kaiming_normal":
+                nn_init.kaiming_normal_(weight, nonlinearity="relu")
+            elif strategy == "orthogonal":
+                nn_init.orthogonal_(weight)
+            elif strategy == "zeros":
+                nn_init.zeros_(weight)
+            if submodule.bias is not None:
+                nn_init.zeros_(submodule.bias)
+        elif isinstance(submodule, nn.Embedding):
+            weight = submodule.weight
+            if strategy == "xavier_uniform":
+                nn_init.xavier_uniform_(weight)
+            elif strategy == "xavier_normal":
+                nn_init.xavier_normal_(weight)
+            elif strategy == "kaiming_uniform":
+                nn_init.kaiming_uniform_(weight, nonlinearity="relu")
+            elif strategy == "kaiming_normal":
+                nn_init.kaiming_normal_(weight, nonlinearity="relu")
+            elif strategy == "orthogonal":
+                nn_init.orthogonal_(weight)
+            elif strategy == "zeros":
+                nn_init.zeros_(weight)
+        elif isinstance(submodule, (nn.LayerNorm, nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            if hasattr(submodule, "weight") and submodule.weight is not None:
+                nn_init.ones_(submodule.weight)
+            if hasattr(submodule, "bias") and submodule.bias is not None:
+                nn_init.zeros_(submodule.bias)
+
+    module.apply(initialise_module)
 
 
 class WarmupDecayScheduler:
@@ -316,6 +382,7 @@ class TrainingConfig:
     autocast_dtype: str = "float16"
     grad_scaler: bool = True
     validation_split: float = 0.1
+    seed: Optional[int] = None
     optimizer: str = "adam"
     weight_decay: float = 0.0
     beta1: float = 0.9
@@ -325,6 +392,7 @@ class TrainingConfig:
     momentum: float = 0.9
     nesterov: bool = False
     solver: str = "optimizer"
+    parameter_init: Optional[str] = None
     scheduler: Optional[str] = None
     warmup_steps: int = 0
     min_lr_ratio: float = 0.0
@@ -348,7 +416,24 @@ class Trainer:
         base_device = self._resolve_device(config.device)
         self.distributed: DistributedState = init_distributed(config.distributed, base_device)
         self.device = self.distributed.device
+        self._seed_generator: Optional[torch.Generator]
+        self._worker_init_fn: Optional[Callable[[int], None]]
+        if config.seed is not None:
+            self._seed_generator = seed_everything(config.seed, rank=self.distributed.rank)
+            self._worker_init_fn = seed_worker
+            _emit_info(
+                "Seeded RNGs with base seed %d (rank offset %d)"
+                % (int(config.seed), self.distributed.rank)
+            )
+        else:
+            self._seed_generator = None
+            self._worker_init_fn = None
         self.model.to(self.device)
+        if config.parameter_init:
+            _initialise_parameters(self.model, config.parameter_init)
+            if self.distributed.enabled:
+                self.distributed.sync_module_state(self.model)
+            _emit_info(f"Applied parameter initialisation: {config.parameter_init}")
         self.ddp_model: Optional[nn.parallel.DistributedDataParallel]
         if self.distributed.enabled:
             ddp_kwargs = {
@@ -436,6 +521,14 @@ class Trainer:
                 amp_state,
             )
         )
+
+    @property
+    def data_loader_generator(self) -> Optional[torch.Generator]:
+        return self._seed_generator
+
+    @property
+    def worker_init_fn(self) -> Optional[Callable[[int], None]]:
+        return self._worker_init_fn
 
     def _resolve_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -777,9 +870,15 @@ def train_baseline(
 ) -> Trainer:
     dataset = TensorDataset(formula_vectors, energies)
     val_size = int(len(dataset) * config.validation_split)
+    split_generator: Optional[torch.Generator] = None
+    if config.seed is not None:
+        split_generator = torch.Generator()
+        split_generator.manual_seed(int(config.seed))
     if val_size > 0:
         train_size = len(dataset) - val_size
-        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+        train_dataset, val_dataset = random_split(
+            dataset, [train_size, val_size], generator=split_generator
+        )
         train_indices = list(train_dataset.indices)  # type: ignore[attr-defined]
         val_indices = list(val_dataset.indices)  # type: ignore[attr-defined]
     else:
@@ -825,6 +924,8 @@ def train_baseline(
         shuffle=train_sampler is None,
         sampler=train_sampler,
         num_workers=config.num_workers,
+        worker_init_fn=trainer.worker_init_fn,
+        generator=trainer.data_loader_generator,
     )
     if val_dataset is not None:
         val_sampler = trainer.distributed.build_sampler(val_dataset, shuffle=False)
@@ -834,6 +935,8 @@ def train_baseline(
             shuffle=False,
             sampler=val_sampler,
             num_workers=config.num_workers,
+            worker_init_fn=trainer.worker_init_fn,
+            generator=trainer.data_loader_generator,
         )
     else:
         val_loader = None
@@ -873,7 +976,24 @@ class PotentialTrainer:
         base_device = self._resolve_device(config.device)
         self.distributed: DistributedState = init_distributed(config.distributed, base_device)
         self.device = self.distributed.device
+        self._seed_generator: Optional[torch.Generator]
+        self._worker_init_fn: Optional[Callable[[int], None]]
+        if config.seed is not None:
+            self._seed_generator = seed_everything(config.seed, rank=self.distributed.rank)
+            self._worker_init_fn = seed_worker
+            _emit_info(
+                "Seeded RNGs with base seed %d (rank offset %d)"
+                % (int(config.seed), self.distributed.rank)
+            )
+        else:
+            self._seed_generator = None
+            self._worker_init_fn = None
         self.model.to(self.device)
+        if config.parameter_init:
+            _initialise_parameters(self.model, config.parameter_init)
+            if self.distributed.enabled:
+                self.distributed.sync_module_state(self.model)
+            _emit_info(f"Applied parameter initialisation: {config.parameter_init}")
         self.scheduler: Optional[WarmupDecayScheduler] = None
         self.energy_loss = nn.MSELoss()
         self.force_loss = nn.MSELoss()
@@ -986,6 +1106,14 @@ class PotentialTrainer:
                 amp_state,
             )
         )
+
+    @property
+    def data_loader_generator(self) -> Optional[torch.Generator]:
+        return self._seed_generator
+
+    @property
+    def worker_init_fn(self) -> Optional[Callable[[int], None]]:
+        return self._worker_init_fn
 
     def _resolve_device(self, device: str) -> torch.device:
         if device == "auto":
@@ -1395,9 +1523,15 @@ def train_potential_model(
     baseline_requires_grad: bool = True,
 ) -> PotentialTrainer:
     val_size = int(len(dataset) * config.validation_split)
+    split_generator: Optional[torch.Generator] = None
+    if config.seed is not None:
+        split_generator = torch.Generator()
+        split_generator.manual_seed(int(config.seed))
     if val_size > 0:
         train_size = len(dataset) - val_size
-        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+        train_dataset, val_dataset = random_split(
+            dataset, [train_size, val_size], generator=split_generator
+        )
     else:
         train_dataset = dataset
         val_dataset = None
@@ -1415,6 +1549,8 @@ def train_potential_model(
         sampler=train_sampler,
         collate_fn=collate_graphs,
         num_workers=config.num_workers,
+        worker_init_fn=trainer.worker_init_fn,
+        generator=trainer.data_loader_generator,
     )
     if val_dataset is not None:
         val_sampler = trainer.distributed.build_sampler(val_dataset, shuffle=False)
@@ -1425,6 +1561,8 @@ def train_potential_model(
             sampler=val_sampler,
             collate_fn=collate_graphs,
             num_workers=config.num_workers,
+            worker_init_fn=trainer.worker_init_fn,
+            generator=trainer.data_loader_generator,
         )
     else:
         val_loader = None
