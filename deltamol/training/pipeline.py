@@ -22,11 +22,6 @@ try:  # pragma: no cover - optional dependency import guard
 except ImportError:  # pragma: no cover - tensorboard may be unavailable
     SummaryWriter = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional dependency import guard
-    from torch.utils.tensorboard import SummaryWriter
-except ImportError:  # pragma: no cover - tensorboard may be unavailable
-    SummaryWriter = None  # type: ignore[assignment]
-
 from ..models.baseline import LinearAtomicBaseline, LinearBaselineConfig
 from ..models.potential import PotentialOutput
 from .datasets import MolecularGraphDataset, collate_graphs
