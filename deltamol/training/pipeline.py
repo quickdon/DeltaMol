@@ -370,7 +370,7 @@ class TrainingConfig:
     batch_size: int = 32
     num_workers: int = 0
     update_frequency: int = 1
-    log_every: int = 10
+    log_every: int = 1
     log_every_steps: int = 100
     device: str = "auto"
     mixed_precision: bool = False
