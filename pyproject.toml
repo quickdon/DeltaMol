@@ -15,6 +15,7 @@ dependencies = [
     "h5py",
     "numpy",
     "pyyaml",
+    "tensorboard",
 ]
 
 [project.optional-dependencies]

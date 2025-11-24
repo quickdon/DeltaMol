@@ -3,3 +3,4 @@ ase
 h5py
 numpy
 pyyaml
+tensorboard
