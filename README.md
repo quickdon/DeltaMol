@@ -88,6 +88,27 @@ The command will:
    (latest weights) so you can transfer the best model into potential training
    while keeping a checkpoint that is ready to resume optimisation.
 
+DeltaMol standardises raw datasets by looking for the canonical fields
+`atoms`, `coordinates`, `energies`, and (optionally) `forces`. Any additional
+information remains available via the dataset metadata and the forces field can
+be omitted when a source dataset only provides energies. Files stored as NPZ,
+NPY, JSON, YAML, or Torch checkpoints are recognised automatically based on the
+extension, and the CLI exposes `--dataset-format` to override auto-detection
+when necessary. If a dataset uses different field names you can map them to the
+canonical keys directly on the command line:
+
+```bash
+python -m deltamol.main train-baseline data.json \
+    --dataset-format json \
+    --dataset-key atoms=Z \
+    --dataset-key coordinates=xyz \
+    --dataset-key energies=E_total \
+    --dataset-key forces=gradients
+```
+
+The same mapping controls propagate to potential training, so once a dataset is
+standardised you can reuse the configuration across models.
+
 When the baseline behaves like a simple linear regression, you can bypass
 iterative optimisation and recover the atomic energy coefficients with a single
 least-squares solve:
@@ -164,8 +185,11 @@ definition.
 # configs/potential.yaml
 dataset:
   path: datasets/DFT_uniques.npz
+  format: npz
   cutoff: 6.0
   dtype: float32
+  key_map:
+    energies: Etot
 model:
   name: transformer
   hidden_dim: 256
@@ -204,6 +228,13 @@ and resume from the final optimiser state with minimal effort. Mixed precision
 can be toggled directly in the YAML file via the `mixed_precision`,
 `autocast_dtype`, and `grad_scaler` fields or overridden on the CLI with
 `--mixed-precision`, `--precision-dtype`, and `--no-grad-scaler`.
+
+Dataset sections inside the experiment configuration accept the same `format`
+and `key_map` fields exposed on the CLI. Each `key_map` entry follows the
+`canonical: source` syntax and determines where to find the atomic numbers,
+coordinates, energies, or forces within the raw file. Because these mappings are
+stored alongside the rest of the experiment description, you can reuse the same
+configuration when swapping between datasets that share the same layout.
 
 The potential workflow mirrors the logging controls offered by the baseline
 trainer. Adjust batch-level verbosity with `--log-every-steps` and disable

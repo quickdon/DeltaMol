@@ -10,7 +10,7 @@ from typing import Iterable, Optional
 import torch
 
 from .config.manager import save_config
-from .data.io import load_npz_dataset
+from .data.io import load_dataset
 from .models.baseline import build_formula_vector
 from .training.pipeline import TrainingConfig, train_baseline
 from .utils import is_main_process
@@ -23,6 +23,8 @@ def run_baseline_training(
     dataset_path: Path,
     output_dir: Path,
     *,
+    dataset_format: str | None = None,
+    dataset_key_map: dict[str, str] | None = None,
     epochs: Optional[int] = None,
     batch_size: Optional[int] = None,
     update_frequency: Optional[int] = None,
@@ -46,7 +48,9 @@ def run_baseline_training(
     """Train the linear atomic baseline on a dataset."""
 
     configure_logging(output_dir)
-    dataset = load_npz_dataset(dataset_path)
+    dataset = load_dataset(dataset_path, format=dataset_format, key_map=dataset_key_map)
+    if dataset.energies is None:
+        raise ValueError("Baseline training requires energies in the dataset")
     species = sorted({int(z) for atoms in dataset.atoms for z in atoms})
     if is_main_process():
         LOGGER.info(

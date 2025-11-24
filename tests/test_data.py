@@ -1,10 +1,11 @@
+import json
+
 import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
 
-from deltamol.data.io import load_npz_dataset
-from deltamol.data.io import MolecularDataset
+from deltamol.data.io import MolecularDataset, load_dataset, load_npz_dataset
 from deltamol.training.datasets import MolecularGraphDataset, collate_graphs
 
 
@@ -28,6 +29,67 @@ def test_load_npz_dataset(tmp_path):
     assert dataset.coordinates.shape[0] == 2
     assert dataset.energies.tolist() == pytest.approx([-76.4, -40.2], abs=1e-5)
     assert dataset.metadata["split"].tolist() == [1, 2]
+
+
+def test_load_dataset_from_json(tmp_path):
+    atoms = [[1, 8, 1], [6, 1]]
+    coordinates = [
+        [[0.0, 0.0, 0.0], [0.0, 0.0, 0.96], [0.0, 0.75, -0.24]],
+        [[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]],
+    ]
+    energies = [-76.4, -40.2]
+    payload = {
+        "Z": atoms,
+        "xyz": coordinates,
+        "energy": energies,
+        "labels": ["water", "methane"],
+    }
+    dataset_path = tmp_path / "dataset.json"
+    dataset_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    dataset = load_dataset(dataset_path)
+
+    assert dataset.forces is None
+    assert dataset.energies.tolist() == pytest.approx(energies, abs=1e-5)
+    assert dataset.metadata["labels"] == ["water", "methane"]
+
+
+def test_load_dataset_with_key_overrides(tmp_path):
+    atoms = np.array([
+        np.array([1, 1]),
+        np.array([8, 1]),
+    ], dtype=object)
+    coords = np.array([
+        np.zeros((2, 3), dtype=np.float32),
+        np.ones((2, 3), dtype=np.float32),
+    ], dtype=object)
+    energies = np.array([-1.1, -2.2], dtype=np.float32)
+    forces = np.array([
+        np.zeros((2, 3), dtype=np.float32),
+        np.ones((2, 3), dtype=np.float32),
+    ], dtype=object)
+    payload = {
+        "numbers": atoms,
+        "coords": coords,
+        "E": energies,
+        "F_total": forces,
+    }
+    dataset_path = tmp_path / "dataset.pt"
+    torch.save(payload, dataset_path)
+
+    dataset = load_dataset(
+        dataset_path,
+        format="pt",
+        key_map={
+            "atoms": "numbers",
+            "coordinates": "coords",
+            "energies": "E",
+            "forces": "F_total",
+        },
+    )
+
+    assert dataset.forces.shape[0] == 2
+    assert dataset.forces[1].shape == (2, 3)
 
 
 def test_molecular_graph_dataset_and_collate():

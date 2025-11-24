@@ -12,13 +12,20 @@ surfaces by embracing three core ideas:
 
 ## Workflow overview
 
-1. Prepare a dataset as a NumPy ``.npz`` archive containing ``atoms``,
-   ``coordinates`` and ``Etot``/``energies`` arrays.
+1. Prepare a dataset that exposes the canonical ``atoms``, ``coordinates``, and
+   ``energies`` fields (``forces`` is optional). Files stored as NumPy ``.npz``
+   or ``.npy`` archives, JSON/YAML blobs, or Torch checkpoints are all
+   supported.
 2. Cache descriptors using ``python -m deltamol.main cache-descriptors``. The
    cache is stored as an HDF5 file.
 3. Train the baseline using ``python -m deltamol.main train-baseline``.
 4. Plug the cached descriptors into graph/transformer models (under active
    development).
+
+When datasets use different field names, specify a mapping between the
+canonical keys (``atoms``, ``coordinates``, ``energies``, ``forces``) and the raw
+columns either on the CLI or inside the experiment YAML. Additional arrays are
+preserved as metadata and remain accessible during downstream processing.
 
 ## Reproducibility
 

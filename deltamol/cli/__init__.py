@@ -11,7 +11,12 @@ from typing import Callable, Dict, Optional, Sequence, Tuple
 import torch
 
 from ..config.manager import load_config, save_config
-from ..data.io import MolecularDataset, cache_descriptor_matrix, load_npz_dataset
+from ..data.io import (
+    MolecularDataset,
+    cache_descriptor_matrix,
+    load_dataset,
+    load_npz_dataset,
+)
 from ..descriptors.acsf import build_acsf_descriptor
 from ..descriptors.fchl19 import build_fchl19_descriptor
 from ..descriptors.lmbtr import build_lmbtr_descriptor
@@ -39,6 +44,17 @@ _DESCRIPTOR_BUILDERS: Dict[str, Callable] = {
     "lmbtr": build_lmbtr_descriptor,
     "fchl19": build_fchl19_descriptor,
 }
+
+_DATASET_FORMAT_CHOICES = (
+    "auto",
+    "npz",
+    "npy",
+    "json",
+    "yaml",
+    "yml",
+    "pt",
+    "pth",
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -78,6 +94,29 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
     raise ValueError(f"Unsupported potential model '{model_cfg.name}'")
 
 
+def _parse_dataset_key_overrides(values: Optional[Sequence[str]]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    if not values:
+        return mapping
+    allowed = {"atoms", "coordinates", "energies", "forces"}
+    for raw in values:
+        if "=" not in raw:
+            raise ValueError(
+                f"Invalid dataset key override '{raw}'. Expected format CANONICAL=SOURCE"
+            )
+        canonical, source = raw.split("=", 1)
+        canonical = canonical.strip().lower()
+        source = source.strip()
+        if canonical not in allowed:
+            raise ValueError(
+                f"Unsupported canonical key '{canonical}'. Choose from {sorted(allowed)}"
+            )
+        if not source:
+            raise ValueError(f"Dataset key override '{raw}' is missing a source field")
+        mapping[canonical] = source
+    return mapping
+
+
 def _load_baseline(
     baseline_cfg: Optional[BaselineConfig], species: Sequence[int]
 ) -> Tuple[Optional[LinearAtomicBaseline], bool]:
@@ -102,9 +141,15 @@ def _train_baseline(args: argparse.Namespace) -> None:
     parameter_init = None
     if args.parameter_init and args.parameter_init.lower() not in {"default", "none"}:
         parameter_init = args.parameter_init
+    try:
+        dataset_key_map = _parse_dataset_key_overrides(args.dataset_key)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     run_baseline_training(
         args.dataset,
         args.output,
+        dataset_format=args.dataset_format,
+        dataset_key_map=dataset_key_map or None,
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.lr,
@@ -133,7 +178,22 @@ def _train_potential(args: argparse.Namespace) -> None:
     if dataset_path is None:
         raise ValueError("A dataset path must be provided via the CLI or configuration file")
     dataset_path = Path(dataset_path)
-    dataset = load_npz_dataset(dataset_path)
+    config_key_map = dict(experiment.dataset.key_map or {})
+    try:
+        cli_key_map = _parse_dataset_key_overrides(args.dataset_key)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    config_key_map.update(cli_key_map)
+    dataset_format = (
+        args.dataset_format
+        if args.dataset_format not in {None}
+        else experiment.dataset.format
+    )
+    dataset = load_dataset(
+        dataset_path,
+        format=dataset_format,
+        key_map=config_key_map or None,
+    )
     species = _resolve_species(dataset, experiment.dataset.species)
     graph_dataset = MolecularGraphDataset(
         dataset,
@@ -221,6 +281,10 @@ def _train_potential(args: argparse.Namespace) -> None:
             trainer.save_checkpoint(checkpoint_path)
             LOGGER.info("Saved potential checkpoint to %s", checkpoint_path)
         resolved_dataset_cfg = replace(experiment.dataset, path=dataset_path, species=species)
+        if dataset_format is not None:
+            resolved_dataset_cfg = replace(resolved_dataset_cfg, format=dataset_format)
+        if config_key_map:
+            resolved_dataset_cfg = replace(resolved_dataset_cfg, key_map=dict(config_key_map))
         resolved_model_cfg = replace(experiment.model)
         resolved_baseline_cfg = (
             replace(experiment.baseline, species=tuple(experiment.baseline.species or species))
@@ -264,7 +328,20 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     train_parser = subcommands.add_parser("train-baseline", help="Train the linear atomic baseline")
-    train_parser.add_argument("dataset", type=Path, help="Path to the NPZ dataset")
+    train_parser.add_argument("dataset", type=Path, help="Path to the dataset file")
+    train_parser.add_argument(
+        "--dataset-format",
+        choices=_DATASET_FORMAT_CHOICES,
+        default="auto",
+        help="Format of the dataset file (default: infer from extension)",
+    )
+    train_parser.add_argument(
+        "--dataset-key",
+        action="append",
+        default=None,
+        metavar="CANON=FIELD",
+        help="Map dataset fields to canonical keys (repeatable)",
+    )
     train_parser.add_argument("--output", type=Path, default=Path("runs/baseline"))
     train_parser.add_argument("--config", type=Path, help="YAML file with training overrides")
     train_parser.add_argument("--epochs", type=int, default=None, help="Number of epochs (default: 200)")
@@ -369,7 +446,20 @@ def build_parser() -> argparse.ArgumentParser:
         "dataset",
         type=Path,
         nargs="?",
-        help="Path to the NPZ dataset (overrides dataset.path in the config)",
+        help="Path to the dataset file (overrides dataset.path in the config)",
+    )
+    potential_parser.add_argument(
+        "--dataset-format",
+        choices=_DATASET_FORMAT_CHOICES,
+        default=None,
+        help="Override the dataset format defined in the config",
+    )
+    potential_parser.add_argument(
+        "--dataset-key",
+        action="append",
+        default=None,
+        metavar="CANON=FIELD",
+        help="Override dataset key mappings defined in the config",
     )
     potential_parser.add_argument(
         "--config",

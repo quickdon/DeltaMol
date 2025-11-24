@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from .pipeline import PotentialTrainingConfig
 
@@ -13,9 +13,11 @@ class DatasetConfig:
     """Options that control dataset preparation for potential training."""
 
     path: Optional[Path] = None
+    format: Optional[str] = None
     cutoff: float = 5.0
     dtype: str = "float32"
     species: Optional[Tuple[int, ...]] = None
+    key_map: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
