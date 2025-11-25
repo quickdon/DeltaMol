@@ -1303,7 +1303,7 @@ class PotentialTrainer:
             )
             positions = batch["positions"]
             if requires_force_grad:
-                positions = positions.clone().detach().requires_grad_(True)
+                positions = positions.clone().requires_grad_(True)
                 batch["positions"] = positions
             if training and ((step - 1) % self._update_frequency == 0):
                 self.optimizer.zero_grad(set_to_none=True)

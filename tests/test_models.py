@@ -46,3 +46,48 @@ def test_transformer_forward_pass_runs():
     assert output.energy.shape == (2,)
     assert output.forces is not None
     assert output.forces.shape == (2, 3, 3)
+
+
+def test_transformer_forces_match_finite_difference():
+    torch.manual_seed(0)
+    species = (1,)
+    config = TransformerConfig(
+        species=species,
+        hidden_dim=16,
+        num_layers=1,
+        num_heads=2,
+        dropout=0.0,
+        ffn_dim=32,
+        predict_forces=False,
+        soap_num_radial=6,
+        soap_cutoff=3.0,
+        soap_gaussian_width=0.6,
+    )
+    model = TransformerPotential(config).double()
+    model.eval()
+
+    node_indices = torch.tensor([[1, 1]], dtype=torch.long)
+    positions = torch.tensor([[[0.0, 0.0, 0.0], [1.0, 0.4, -0.2]]], dtype=torch.double)
+    positions.requires_grad_(True)
+    adjacency = torch.tensor([[[0.0, 1.0], [1.0, 0.0]]], dtype=torch.double)
+    mask = node_indices != 0
+
+    energy = model(node_indices, positions, adjacency, mask).energy.sum()
+    grad = torch.autograd.grad(energy, positions)[0]
+    forces = -grad
+
+    eps = 1e-4
+    numeric_grad = torch.zeros_like(positions)
+    with torch.no_grad():
+        for atom in range(positions.shape[1]):
+            for coord in range(3):
+                pos_plus = positions.detach().clone()
+                pos_minus = positions.detach().clone()
+                pos_plus[0, atom, coord] += eps
+                pos_minus[0, atom, coord] -= eps
+                e_plus = model(node_indices, pos_plus, adjacency, mask).energy.sum()
+                e_minus = model(node_indices, pos_minus, adjacency, mask).energy.sum()
+                numeric_grad[0, atom, coord] = (e_plus - e_minus) / (2 * eps)
+
+    assert torch.max(torch.abs(forces)) > 0
+    assert torch.allclose(forces, -numeric_grad, atol=1e-2, rtol=1e-2)
