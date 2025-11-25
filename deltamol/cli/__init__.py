@@ -149,9 +149,15 @@ def _train_baseline(args: argparse.Namespace) -> None:
         dataset_key_map = _parse_dataset_key_overrides(args.dataset_key)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    output_dir = args.output
+    if output_dir is None:
+        if config is not None:
+            output_dir = config.output_dir
+        else:
+            output_dir = Path("runs/baseline")
     run_baseline_training(
         args.dataset,
-        args.output,
+        output_dir,
         dataset_format=args.dataset_format,
         dataset_key_map=dataset_key_map or None,
         epochs=args.epochs,
@@ -346,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="CANON=FIELD",
         help="Map dataset fields to canonical keys (repeatable)",
     )
-    train_parser.add_argument("--output", type=Path, default=Path("runs/baseline"))
+    train_parser.add_argument("--output", type=Path, default=None)
     train_parser.add_argument("--config", type=Path, help="YAML file with training overrides")
     train_parser.add_argument("--epochs", type=int, default=None, help="Number of epochs (default: 200)")
     train_parser.add_argument("--batch-size", type=int, default=None, help="Batch size (default: 128)")
