@@ -104,6 +104,21 @@ def run_baseline_training(
             **override_kwargs,
         )
     else:
+        effective_best_checkpoint = (
+            best_checkpoint_name
+            if best_checkpoint_name is not None
+            else config.best_checkpoint_name
+        )
+        effective_last_checkpoint = (
+            last_checkpoint_name
+            if last_checkpoint_name is not None
+            else config.last_checkpoint_name
+        )
+        if effective_best_checkpoint in {None, "", "best.pt"}:
+            effective_best_checkpoint = "baseline_best.pt"
+        if effective_last_checkpoint in {None, "", "last.pt"}:
+            effective_last_checkpoint = "baseline_last.pt"
+
         config = replace(
             config,
             output_dir=output_dir,
@@ -130,26 +145,14 @@ def run_baseline_training(
                 if early_stopping_min_delta is not None
                 else config.early_stopping_min_delta
             ),
-            best_checkpoint_name=(
-                best_checkpoint_name
-                if best_checkpoint_name is not None
-                else config.best_checkpoint_name
-            ),
-            last_checkpoint_name=(
-                last_checkpoint_name
-                if last_checkpoint_name is not None
-                else config.last_checkpoint_name
-            ),
+            best_checkpoint_name=effective_best_checkpoint,
+            last_checkpoint_name=effective_last_checkpoint,
             seed=seed if seed is not None else config.seed,
             parameter_init=(
                 parameter_init if parameter_init is not None else config.parameter_init
             ),
             **override_kwargs,
         )
-        if not config.best_checkpoint_name:
-            config = replace(config, best_checkpoint_name="baseline_best.pt")
-        if not config.last_checkpoint_name:
-            config = replace(config, last_checkpoint_name="baseline_last.pt")
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
     if trainer.distributed.is_main_process():
         best_path = trainer.best_checkpoint_path

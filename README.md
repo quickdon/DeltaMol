@@ -69,7 +69,15 @@ Optional descriptor backends (``dscribe`` and ``qmllib``) can be installed using
 
 ### Baseline training
 
-DeltaMol exposes a CLI that orchestrates the baseline training loop:
+The recommended way to fit the baseline is to skip iterative optimisation and
+recover the atomic energy coefficients with a single least-squares solve:
+
+```bash
+python -m deltamol.main train-baseline data.npz --solver least_squares
+```
+
+DeltaMol also exposes a CLI that orchestrates the baseline training loop with
+an optimizer:
 
 ```bash
 python -m deltamol.main train-baseline path/to/dataset.npz \
@@ -108,14 +116,6 @@ python -m deltamol.main train-baseline data.json \
 
 The same mapping controls propagate to potential training, so once a dataset is
 standardised you can reuse the configuration across models.
-
-When the baseline behaves like a simple linear regression, you can bypass
-iterative optimisation and recover the atomic energy coefficients with a single
-least-squares solve:
-
-```bash
-python -m deltamol.main train-baseline data.npz --solver least_squares
-```
 
 The same `solver` option can be stored inside a YAML configuration alongside
 other training overrides.
