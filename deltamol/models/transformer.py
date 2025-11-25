@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from .potential import PotentialOutput
+from ..features.soap import AtomicSOAPConfig, AtomicSOAPDescriptor
 
 
 @dataclass
@@ -21,6 +22,9 @@ class TransformerConfig:
     dropout: float = 0.1
     ffn_dim: int = 256
     use_coordinate_features: bool = True
+    soap_num_radial: int = 8
+    soap_cutoff: float = 5.0
+    soap_gaussian_width: float = 0.5
     predict_forces: bool = False
 
 
@@ -33,13 +37,20 @@ class TransformerPotential(nn.Module):
         num_species = len(config.species)
         self.embedding = nn.Embedding(num_species + 1, config.hidden_dim, padding_idx=0)
         if config.use_coordinate_features:
-            self.coordinate_mlp = nn.Sequential(
-                nn.Linear(3, config.hidden_dim),
+            soap_config = AtomicSOAPConfig(
+                num_radial=config.soap_num_radial,
+                cutoff=config.soap_cutoff,
+                gaussian_width=config.soap_gaussian_width,
+            )
+            self.descriptor = AtomicSOAPDescriptor(soap_config)
+            self.descriptor_projection = nn.Sequential(
+                nn.Linear(config.soap_num_radial, config.hidden_dim),
                 nn.ReLU(),
                 nn.Linear(config.hidden_dim, config.hidden_dim),
             )
         else:
-            self.coordinate_mlp = None
+            self.descriptor = None
+            self.descriptor_projection = None
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=config.hidden_dim,
             nhead=config.num_heads,
@@ -70,8 +81,9 @@ class TransformerPotential(nn.Module):
         mask = mask.bool()
         mask_float = mask.float()
         x = self.embedding(node_indices)
-        if self.coordinate_mlp is not None:
-            x = x + self.coordinate_mlp(positions)
+        if self.descriptor is not None and self.descriptor_projection is not None:
+            descriptor = self.descriptor(positions, adjacency, mask)
+            x = x + self.descriptor_projection(descriptor)
         encoded = self.encoder(x, src_key_padding_mask=~mask)
         pooled = self._masked_mean(encoded, mask_float)
         energy = self.energy_head(pooled).squeeze(-1)
