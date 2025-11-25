@@ -126,7 +126,11 @@ def _load_baseline(
         int(z) for z in (baseline_cfg.species if baseline_cfg.species else species)
     )
     model = LinearAtomicBaseline(LinearBaselineConfig(species=resolved_species))
-    checkpoint = torch.load(baseline_cfg.checkpoint, map_location="cpu")
+    checkpoint = torch.load(
+        baseline_cfg.checkpoint,
+        map_location="cpu",
+        weights_only=False,
+    )
     if isinstance(checkpoint, dict) and "model_state" in checkpoint:
         state_dict = checkpoint["model_state"]
     else:
