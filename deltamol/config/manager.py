@@ -4,7 +4,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Type, TypeVar, Union, get_args, get_origin
+from typing import (
+    Any,
+    Type,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 try:
     import yaml
@@ -52,10 +60,12 @@ def _build_dataclass(cls: Type[T], data: Mapping[str, Any]) -> T:
     """Instantiate ``cls`` from the mapping ``data``."""
 
     kwargs: dict[str, Any] = {}
+    field_types = get_type_hints(cls)
     for field in fields(cls):
         if field.name not in data:
             continue
-        kwargs[field.name] = _coerce_value(field.type, data[field.name])
+        annotation = field_types.get(field.name, field.type)
+        kwargs[field.name] = _coerce_value(annotation, data[field.name])
     return cls(**kwargs)
 
 
