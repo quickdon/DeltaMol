@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Literal, Optional, Tuple
 
 from .pipeline import PotentialTrainingConfig
 
@@ -33,7 +33,7 @@ class BaselineConfig:
 class ModelConfig:
     """Lightweight description of the neural potential to construct."""
 
-    name: str = "hybrid"
+    name: Literal["gcn", "transformer", "external", "hybrid"] = "transformer"
     hidden_dim: int = 128
     gcn_layers: int = 2
     transformer_layers: int = 2
@@ -47,6 +47,10 @@ class ModelConfig:
     soap_cutoff: float = 5.0
     soap_gaussian_width: float = 0.5
     residual_mode: bool = True
+    adapter: Optional[str] = None
+    adapter_weights: Optional[Path] = None
+    neighbor_strategy: str = "adjacency"
+    neighbor_cutoff: Optional[float] = None
 
 
 @dataclass
