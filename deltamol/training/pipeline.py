@@ -978,9 +978,11 @@ class PotentialTrainer:
         *,
         baseline: Optional[LinearAtomicBaseline] = None,
         baseline_requires_grad: bool = True,
+        residual_mode: bool = True,
     ) -> None:
         self.model = model
         self.config = config
+        self.residual_mode = residual_mode
         base_device = self._resolve_device(config.device)
         self.distributed: DistributedState = init_distributed(config.distributed, base_device)
         self.device = self.distributed.device
@@ -1009,6 +1011,7 @@ class PotentialTrainer:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.baseline = baseline
         self.baseline_trainable = baseline is not None and baseline_requires_grad
+        self._residual_mode_logged = False
         self.history: Dict[str, float] = {}
         self.best_checkpoint_path: Optional[Path] = None
         self.last_checkpoint_path: Optional[Path] = None
@@ -1161,6 +1164,12 @@ class PotentialTrainer:
             details.append(f"force weight={self.config.force_weight}")
             if self.config.predict_forces_directly:
                 details.append("predicting forces directly")
+        if self.baseline is not None:
+            mode_label = (
+                "residual energies (E - baseline)" if self.residual_mode else "absolute energies"
+            )
+            baseline_label = "trainable" if self.baseline_trainable else "frozen"
+            details.append(f"baseline={baseline_label}, targets={mode_label}")
         try:
             steps_per_epoch = len(dataloader)
         except TypeError:
@@ -1279,6 +1288,14 @@ class PotentialTrainer:
                 self.baseline.train(mode=training)
             else:
                 self.baseline.eval()
+        if self.baseline is not None and not self._residual_mode_logged:
+            mode_msg = (
+                "Using residual targets: energies - baseline"
+                if self.residual_mode
+                else "Using absolute energy targets without subtracting the baseline"
+            )
+            _emit_info(mode_msg)
+            self._residual_mode_logged = True
         total_loss = 0.0
         total_energy_loss = 0.0
         total_force_loss = 0.0
@@ -1313,7 +1330,7 @@ class PotentialTrainer:
                     self._amp_enabled, self._autocast_device, self._autocast_dtype
                 ):
                     baseline_energy = None
-                    if self.baseline is not None:
+                    if self.baseline is not None and self.residual_mode:
                         baseline_training = self.baseline_trainable and training
                         baseline_ctx = nullcontext() if baseline_training else torch.no_grad()
                         with baseline_ctx:
@@ -1529,6 +1546,7 @@ def train_potential_model(
     config: PotentialTrainingConfig,
     baseline: Optional[LinearAtomicBaseline] = None,
     baseline_requires_grad: bool = True,
+    residual_mode: bool = True,
 ) -> PotentialTrainer:
     val_size = int(len(dataset) * config.validation_split)
     split_generator: Optional[torch.Generator] = None
@@ -1548,6 +1566,7 @@ def train_potential_model(
         config,
         baseline=baseline,
         baseline_requires_grad=baseline_requires_grad,
+        residual_mode=residual_mode,
     )
     train_sampler = trainer.distributed.build_sampler(train_dataset, shuffle=True)
     train_loader = DataLoader(

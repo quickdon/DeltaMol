@@ -237,6 +237,8 @@ def _train_potential(args: argparse.Namespace) -> None:
             overrides["parameter_init"] = None
         else:
             overrides["parameter_init"] = args.parameter_init
+    if args.residual_mode is not None:
+        experiment = replace(experiment, model=replace(experiment.model, residual_mode=args.residual_mode))
     if overrides:
         if "output_dir" in overrides and not isinstance(overrides["output_dir"], Path):
             overrides["output_dir"] = Path(overrides["output_dir"])
@@ -264,6 +266,7 @@ def _train_potential(args: argparse.Namespace) -> None:
         config=training_cfg,
         baseline=baseline,
         baseline_requires_grad=baseline_trainable,
+        residual_mode=experiment.model.residual_mode,
     )
     if trainer.distributed.is_main_process():
         checkpoint_path = training_cfg.output_dir / "potential.pt"
@@ -518,6 +521,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable gradient scaling during mixed precision runs",
     )
+    residual_group = potential_parser.add_mutually_exclusive_group()
+    residual_group.add_argument(
+        "--residual-mode",
+        dest="residual_mode",
+        action="store_true",
+        help="Train the potential on residual energies (target = E - baseline)",
+    )
+    residual_group.add_argument(
+        "--absolute-mode",
+        dest="residual_mode",
+        action="store_false",
+        help="Train the potential on absolute energies without subtracting the baseline",
+    )
+    residual_group.set_defaults(residual_mode=None)
     potential_parser.add_argument(
         "--log-every-steps",
         type=int,
