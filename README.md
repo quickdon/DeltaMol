@@ -203,6 +203,7 @@ model:
   soap_num_radial: 8
   soap_cutoff: 6.0
   soap_gaussian_width: 0.5
+  residual_mode: true
 training:
   output_dir: runs/potential-hybrid
   epochs: 80
@@ -233,7 +234,11 @@ the copied `potential.pt` convenience file, the run directory will contain
 and resume from the final optimiser state with minimal effort. Mixed precision
 can be toggled directly in the YAML file via the `mixed_precision`,
 `autocast_dtype`, and `grad_scaler` fields or overridden on the CLI with
-`--mixed-precision`, `--precision-dtype`, and `--no-grad-scaler`.
+`--mixed-precision`, `--precision-dtype`, and `--no-grad-scaler`. When a
+baseline is present, `residual_mode` controls whether training targets subtract
+the baseline prediction (the default) or optimise absolute energies instead;
+override the YAML with `--residual-mode` or `--absolute-mode` on the command
+line.
 
 Dataset sections inside the experiment configuration accept the same `format`
 and `key_map` fields exposed on the CLI. Each `key_map` entry follows the

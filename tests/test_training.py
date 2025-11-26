@@ -301,6 +301,46 @@ class _ZeroPotential(nn.Module):
         return PotentialOutput(energy=energy)
 
 
+class _PositionScalePotential(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.scale = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, node_indices, positions, adjacency, mask):  # pragma: no cover - simple
+        del node_indices, adjacency  # unused in this lightweight potential
+        signal = positions.sum(dim=(1, 2))
+        energy = self.scale * signal
+        return PotentialOutput(energy=energy)
+
+
+class _ResidualDataset(Dataset):
+    def __init__(self, *, include_forces: bool = False):
+        self.formula_vectors = [torch.tensor([[1.0]]), torch.tensor([[2.0]])]
+        self.residuals = [0.25, -0.1]
+        self.include_forces = include_forces
+
+    def __len__(self):  # pragma: no cover - trivial
+        return len(self.formula_vectors)
+
+    def __getitem__(self, index: int):  # pragma: no cover - trivial
+        residual = float(self.residuals[index])
+        formula = self.formula_vectors[index]
+        baseline_energy = 0.5 * formula.squeeze(-1)
+        positions = torch.zeros(1, 1, 3, dtype=torch.float32)
+        positions[0, 0, 0] = residual
+        sample = {
+            "energies": torch.tensor([baseline_energy.item() + residual], dtype=torch.float32),
+            "formula_vectors": formula.to(torch.float32),
+            "positions": positions,
+            "mask": torch.tensor([[1.0]], dtype=torch.float32),
+            "node_indices": torch.tensor([[1]], dtype=torch.long),
+            "adjacency": torch.ones(1, 1, 1, dtype=torch.float32),
+        }
+        if self.include_forces:
+            sample["forces"] = torch.zeros(1, 1, 3, dtype=torch.float32)
+        return sample
+
+
 def test_potential_trainer_baseline_requires_grad(tmp_path):
     dataset = _ToyPotentialDataset()
     loader = DataLoader(dataset, batch_size=1, collate_fn=lambda batch: batch[0])
@@ -395,3 +435,69 @@ def test_potential_trainer_mixed_precision_cpu(tmp_path):
     assert torch.bfloat16 in model.recorded_dtypes
     assert any(model.autocast_states)
     assert trainer.scaler is None
+
+
+def _build_residual_baseline():
+    baseline = LinearAtomicBaseline(LinearBaselineConfig(species=(1,)))
+    baseline.linear.weight.data.fill_(0.5)
+    return baseline
+
+
+def test_potential_trainer_supports_residual_and_absolute_targets(tmp_path):
+    dataset = _ResidualDataset()
+    loader = DataLoader(dataset, batch_size=1, collate_fn=lambda batch: batch[0])
+
+    def _run_mode(residual_mode: bool) -> float:
+        run_dir = tmp_path / ("residual" if residual_mode else "absolute")
+        config = PotentialTrainingConfig(
+            output_dir=run_dir,
+            epochs=3,
+            learning_rate=0.5,
+            batch_size=1,
+            validation_split=0.0,
+            tensorboard=False,
+        )
+        trainer = PotentialTrainer(
+            _PositionScalePotential(),
+            config,
+            baseline=_build_residual_baseline(),
+            baseline_requires_grad=False,
+            residual_mode=residual_mode,
+        )
+        history = trainer.train(loader)
+        return history[f"train/{config.epochs}"]
+
+    residual_loss = _run_mode(True)
+    absolute_loss = _run_mode(False)
+
+    assert residual_loss < 0.05
+    assert absolute_loss < 1.0
+    assert absolute_loss > residual_loss
+
+
+@pytest.mark.parametrize("residual_mode", [True, False])
+def test_potential_trainer_force_weight_with_residual_modes(tmp_path, residual_mode):
+    dataset = _ResidualDataset(include_forces=True)
+    loader = DataLoader(dataset, batch_size=1, collate_fn=lambda batch: batch[0])
+    config = PotentialTrainingConfig(
+        output_dir=tmp_path / ("force-residual" if residual_mode else "force-absolute"),
+        epochs=2,
+        learning_rate=0.25,
+        batch_size=1,
+        validation_split=0.0,
+        force_weight=0.5,
+        tensorboard=False,
+    )
+    trainer = PotentialTrainer(
+        _PositionScalePotential(),
+        config,
+        baseline=_build_residual_baseline(),
+        baseline_requires_grad=False,
+        residual_mode=residual_mode,
+    )
+    history = trainer.train(loader)
+    final_key = f"train/{config.epochs}"
+    force_key = f"train_force/{config.epochs}"
+    assert final_key in history
+    assert force_key in history
+    assert history[force_key] >= 0.0

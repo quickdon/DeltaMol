@@ -46,6 +46,7 @@ class ModelConfig:
     soap_num_radial: int = 8
     soap_cutoff: float = 5.0
     soap_gaussian_width: float = 0.5
+    residual_mode: bool = True
 
 
 @dataclass
