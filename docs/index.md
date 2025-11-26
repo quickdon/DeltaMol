@@ -19,8 +19,8 @@ surfaces by embracing three core ideas:
 2. Cache descriptors using ``python -m deltamol.main cache-descriptors``. The
    cache is stored as an HDF5 file.
 3. Train the baseline using ``python -m deltamol.main train-baseline``.
-4. Plug the cached descriptors into graph/transformer models (under active
-   development).
+4. Train the hybrid SOAP-guided potential using the cached descriptors and the
+   `train-potential` command.
 
 When datasets use different field names, specify a mapping between the
 canonical keys (``atoms``, ``coordinates``, ``energies``, ``forces``) and the raw
@@ -38,7 +38,8 @@ potential models.
 
 ## Roadmap
 
-* Formalize the energy correction graph network and expose a high level trainer.
+* Extend the hybrid SOAP-guided potential with additional pooling and
+  regularisation experiments.
 * Add force supervision via analytic gradients and direct regression.
 * Integrate experiment tracking and configuration management improvements.
 * Provide example notebooks and benchmarking scripts.

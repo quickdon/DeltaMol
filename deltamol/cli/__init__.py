@@ -24,12 +24,10 @@ from ..descriptors.slatm import build_slatm_descriptor
 from ..descriptors.soap import build_soap_descriptor
 from ..main import run_baseline_training
 from ..models import (
-    GCNConfig,
-    GCNPotential,
+    HybridPotential,
+    HybridPotentialConfig,
     LinearAtomicBaseline,
     LinearBaselineConfig,
-    TransformerConfig,
-    TransformerPotential,
 )
 from ..training.configs import BaselineConfig, ModelConfig, PotentialExperimentConfig
 from ..training.datasets import MolecularGraphDataset
@@ -69,28 +67,23 @@ def _resolve_species(dataset: MolecularDataset, explicit: Optional[Sequence[int]
 def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
     species_tuple = tuple(int(z) for z in species)
     name = model_cfg.name.lower()
-    if name == "gcn":
-        config = GCNConfig(
+    if name in {"hybrid", "hybrid-potential", "soap-transformer"}:
+        config = HybridPotentialConfig(
             species=species_tuple,
             hidden_dim=model_cfg.hidden_dim,
-            num_layers=model_cfg.num_layers,
-            dropout=model_cfg.dropout,
-            use_coordinate_features=model_cfg.use_coordinate_features,
-            predict_forces=model_cfg.predict_forces,
-        )
-        return GCNPotential(config)
-    if name in {"transformer", "transformer-potential"}:
-        config = TransformerConfig(
-            species=species_tuple,
-            hidden_dim=model_cfg.hidden_dim,
-            num_layers=model_cfg.num_layers,
+            gcn_layers=model_cfg.gcn_layers,
+            transformer_layers=model_cfg.transformer_layers,
             num_heads=model_cfg.num_heads,
-            dropout=model_cfg.dropout,
             ffn_dim=model_cfg.ffn_dim,
+            dropout=model_cfg.dropout,
+            cutoff=model_cfg.cutoff,
             use_coordinate_features=model_cfg.use_coordinate_features,
+            soap_num_radial=model_cfg.soap_num_radial,
+            soap_cutoff=model_cfg.soap_cutoff,
+            soap_gaussian_width=model_cfg.soap_gaussian_width,
             predict_forces=model_cfg.predict_forces,
         )
-        return TransformerPotential(config)
+        return HybridPotential(config)
     raise ValueError(f"Unsupported potential model '{model_cfg.name}'")
 
 

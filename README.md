@@ -12,8 +12,8 @@ datasets, cache descriptors, train models, and evaluate results.
   models on standard `.npz` archives.
 * Support multiple descriptor families (ACSF, SOAP, SLATM, LMBTR, FCHL19) behind
   a common abstraction.
-* Combine a linear atomic baseline with graph neural networks and transformer
-  style message passing to model energy corrections.
+* Combine a linear atomic baseline with a hybrid SOAP-guided graph/transformer
+  potential to model energy corrections.
 * Offer ready-to-use tooling for dataset preparation, model training,
   checkpointing, and evaluation.
 
@@ -26,7 +26,7 @@ deltamol/
 ├── data/            # Dataset IO, caching and splitting utilities
 ├── descriptors/     # Descriptor abstraction layer and concrete wrappers
 ├── evaluation/      # Metrics and validation helpers
-├── models/          # Baseline and graph neural network models
+├── models/          # Baseline and hybrid potential models
 ├── training/        # Trainers, pipelines and reusable routines
 └── utils/           # Miscellaneous helpers
 ```
@@ -191,14 +191,20 @@ dataset:
   key_map:
     energies: Etot
 model:
-  name: transformer
+  name: hybrid
   hidden_dim: 256
-  num_layers: 6
+  gcn_layers: 3
+  transformer_layers: 4
   num_heads: 8
+  ffn_dim: 512
   dropout: 0.1
   predict_forces: true
+  cutoff: 6.0
+  soap_num_radial: 8
+  soap_cutoff: 6.0
+  soap_gaussian_width: 0.5
 training:
-  output_dir: runs/potential-transformer
+  output_dir: runs/potential-hybrid
   epochs: 80
   batch_size: 16
   learning_rate: 5.0e-4
@@ -258,7 +264,7 @@ configuration via the nested `distributed` block:
 
 ```yaml
 training:
-  output_dir: runs/potential-transformer
+  output_dir: runs/potential-hybrid
   batch_size: 16
   update_frequency: 4
   num_workers: 8
