@@ -56,8 +56,8 @@ class MolecularDataset:
 
 _CANONICAL_KEYS: Dict[str, tuple[str, ...]] = {
     "atoms": ("atoms", "atomic_numbers", "z", "species"),
-    "coordinates": ("coordinates", "xyz", "positions"),
-    "energies": ("energies", "energy", "Etot", "total_energy"),
+    "coordinates": ("coordinates", "xyz", "positions", "R"),
+    "energies": ("energies", "energy", "Etot", "total_energy", "E"),
     "forces": ("forces", "force", "F"),
 }
 
