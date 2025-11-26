@@ -72,7 +72,9 @@ class PotentialModelAdapter(nn.Module):
             valid = mask[i]
             species = node_indices[i, valid]
             coords = positions[i, valid]
-            neighbors, distances = self._build_neighbors(coords, adjacency[i], valid)
+            local_adj = adjacency[i][valid][:, valid]
+            local_mask = valid[valid]
+            neighbors, distances = self._build_neighbors(coords, local_adj, local_mask)
             species_list.append(species)
             position_list.append(coords)
             neighbor_list.append(neighbors)
