@@ -33,14 +33,19 @@ class BaselineConfig:
 class ModelConfig:
     """Lightweight description of the neural potential to construct."""
 
-    name: str = "gcn"
+    name: str = "hybrid"
     hidden_dim: int = 128
-    num_layers: int = 3
+    gcn_layers: int = 2
+    transformer_layers: int = 2
     dropout: float = 0.1
     use_coordinate_features: bool = True
     predict_forces: bool = False
-    num_heads: int = 8
+    num_heads: int = 4
     ffn_dim: int = 256
+    cutoff: float = 5.0
+    soap_num_radial: int = 8
+    soap_cutoff: float = 5.0
+    soap_gaussian_width: float = 0.5
 
 
 @dataclass
