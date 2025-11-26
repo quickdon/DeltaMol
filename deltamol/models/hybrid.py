@@ -88,7 +88,8 @@ class _AttentionPooling(nn.Module):
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         scores = self.score(x).squeeze(-1)
-        scores = scores.masked_fill(~mask, -1e9)
+        fill_value = torch.finfo(scores.dtype).min
+        scores = scores.masked_fill(~mask, fill_value)
         weights = torch.softmax(scores, dim=1)
         return torch.sum(weights.unsqueeze(-1) * x, dim=1)
 
