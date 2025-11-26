@@ -24,10 +24,12 @@ from ..descriptors.slatm import build_slatm_descriptor
 from ..descriptors.soap import build_soap_descriptor
 from ..main import run_baseline_training
 from ..models import (
+    PotentialModelAdapter,
     HybridPotential,
     HybridPotentialConfig,
     LinearAtomicBaseline,
     LinearBaselineConfig,
+    load_external_model,
 )
 from ..training.configs import BaselineConfig, ModelConfig, PotentialExperimentConfig
 from ..training.datasets import MolecularGraphDataset
@@ -67,7 +69,7 @@ def _resolve_species(dataset: MolecularDataset, explicit: Optional[Sequence[int]
 def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
     species_tuple = tuple(int(z) for z in species)
     name = model_cfg.name.lower()
-    if name in {"hybrid", "hybrid-potential", "soap-transformer"}:
+    if name in {"transformer", "hybrid", "hybrid-potential", "soap-transformer"}:
         config = HybridPotentialConfig(
             species=species_tuple,
             hidden_dim=model_cfg.hidden_dim,
@@ -84,6 +86,49 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
             predict_forces=model_cfg.predict_forces,
         )
         return HybridPotential(config)
+    if name == "gcn":
+        config = HybridPotentialConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            gcn_layers=model_cfg.gcn_layers,
+            transformer_layers=0,
+            num_heads=model_cfg.num_heads,
+            ffn_dim=model_cfg.ffn_dim,
+            dropout=model_cfg.dropout,
+            cutoff=model_cfg.cutoff,
+            use_coordinate_features=model_cfg.use_coordinate_features,
+            soap_num_radial=model_cfg.soap_num_radial,
+            soap_cutoff=model_cfg.soap_cutoff,
+            soap_gaussian_width=model_cfg.soap_gaussian_width,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return HybridPotential(config)
+    if name == "external":
+        if not model_cfg.adapter:
+            raise ValueError("External model requires an 'adapter' path to be provided")
+        try:
+            external_model = load_external_model(model_cfg.adapter)
+        except ImportError as exc:
+            raise ImportError(
+                "Failed to load external model. Install its dependencies or update the adapter path."
+            ) from exc
+        if model_cfg.adapter_weights is not None:
+            checkpoint = torch.load(
+                model_cfg.adapter_weights,
+                map_location="cpu",
+                weights_only=False,
+            )
+            try:
+                external_model.load_state_dict(checkpoint)
+            except Exception as exc:  # pragma: no cover - defensive for custom loaders
+                raise RuntimeError(
+                    f"Unable to load weights from {model_cfg.adapter_weights}: {exc}"
+                ) from exc
+        return PotentialModelAdapter(
+            external_model,
+            neighbor_strategy=model_cfg.neighbor_strategy,
+            neighbor_cutoff=model_cfg.neighbor_cutoff or model_cfg.cutoff,
+        )
     raise ValueError(f"Unsupported potential model '{model_cfg.name}'")
 
 
