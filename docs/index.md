@@ -22,6 +22,11 @@ surfaces by embracing three core ideas:
 4. Train the hybrid SOAP-guided potential using the cached descriptors and the
    `train-potential` command.
 
+Both trainers support resuming interrupted runs. Pass ``--resume-from`` on the
+CLI or set ``training.resume_from`` inside an experiment YAML file; either form
+accepts an output directory containing the latest checkpoint or an explicit
+checkpoint path such as ``potential_last.pt``.
+
 When datasets use different field names, specify a mapping between the
 canonical keys (``atoms``, ``coordinates``, ``energies``, ``forces``) and the raw
 columns either on the CLI or inside the experiment YAML. Additional arrays are
