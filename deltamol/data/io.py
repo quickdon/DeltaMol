@@ -137,7 +137,10 @@ def _resolve_field(
 
 def _broadcast_atomic_numbers(atoms: np.ndarray, target: int) -> np.ndarray:
     if atoms.dtype != object:
-        atoms = np.array([np.asarray(atoms, dtype=int)], dtype=object)
+        if atoms.ndim == 1:
+            atoms = np.array([np.asarray(atoms, dtype=int)], dtype=object)
+        else:
+            atoms = np.array([np.asarray(entry, dtype=int) for entry in atoms], dtype=object)
     else:
         atoms = np.array([np.asarray(entry, dtype=int) for entry in atoms], dtype=object)
     length = len(atoms)
@@ -279,12 +282,12 @@ def _concat_datasets(datasets: Sequence[MolecularDataset]) -> MolecularDataset:
     energies = None
     forces = None
     metadata_entries = []
-    if any(ds.energies is not None for ds in datasets):
-        energies_list = [ds.energies for ds in datasets if ds.energies is not None]
-        energies = np.concatenate(energies_list, axis=0)
-    if any(ds.forces is not None for ds in datasets):
-        forces_list = [ds.forces for ds in datasets if ds.forces is not None]
-        forces = np.concatenate(forces_list, axis=0)
+    has_energies = [ds.energies is not None for ds in datasets]
+    has_forces = [ds.forces is not None for ds in datasets]
+    if all(has_energies):
+        energies = np.concatenate([ds.energies for ds in datasets], axis=0)
+    if any(has_forces) and all(has_forces):
+        forces = np.concatenate([ds.forces for ds in datasets], axis=0)
     for ds in datasets:
         if ds.metadata is not None:
             metadata_entries.append(ds.metadata)
