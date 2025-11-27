@@ -321,7 +321,7 @@ def _train_potential(args: argparse.Namespace) -> None:
             LOGGER.info("Best potential checkpoint saved to %s", best_path)
         if last_path is not None and last_path != best_path:
             LOGGER.info("Last potential checkpoint saved to %s", last_path)
-        alias_source = last_path or best_path
+        alias_source = best_path or last_path
         if alias_source is not None:
             if Path(alias_source).resolve() != checkpoint_path.resolve():
                 shutil.copy2(alias_source, checkpoint_path)
