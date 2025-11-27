@@ -1022,7 +1022,7 @@ def _solve_least_squares(
     if not train_indices:
         raise ValueError("Least squares solver requires at least one training sample")
     train_inputs = dataset.inputs[train_indices]
-    train_targets = dataset.targets[train_indices]
+    train_targets = dataset.targets[train_indices].squeeze(-1)
     _emit_info(
         "Fitting baseline with closed-form least squares on %d samples%s"
         % (
@@ -1042,7 +1042,7 @@ def _solve_least_squares(
         history["train/1"] = train_loss
         if val_indices:
             val_inputs = dataset.inputs[val_indices]
-            val_targets = dataset.targets[val_indices]
+            val_targets = dataset.targets[val_indices].squeeze(-1)
             val_predictions = model(val_inputs)
             val_loss = torch.mean((val_predictions - val_targets) ** 2).item()
             history["val/1"] = val_loss
