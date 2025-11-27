@@ -31,6 +31,7 @@ from ..models import (
     LinearBaselineConfig,
     load_external_model,
 )
+from ..evaluation.testing import evaluate_potential_model, plot_predictions_vs_targets
 from ..training.configs import BaselineConfig, ModelConfig, PotentialExperimentConfig
 from ..training.datasets import MolecularGraphDataset
 from ..training.pipeline import TrainingConfig, train_potential_model
@@ -205,6 +206,8 @@ def _train_baseline(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         learning_rate=args.lr,
         validation_split=args.validation_split,
+        test_split=args.test_split,
+        test_dataset=args.test_dataset,
         solver=args.solver,
         early_stopping_patience=args.early_stopping_patience,
         early_stopping_min_delta=args.early_stopping_min_delta,
@@ -253,6 +256,26 @@ def _train_potential(args: argparse.Namespace) -> None:
         cutoff=experiment.dataset.cutoff,
         dtype=experiment.dataset.dtype,
     )
+    test_dataset_path = args.test_dataset or experiment.dataset.test_path
+    test_graph_dataset: MolecularGraphDataset | None = None
+    if test_dataset_path is not None:
+        test_format = args.test_dataset_format or experiment.dataset.test_format or dataset_format
+        test_raw = load_dataset(
+            test_dataset_path,
+            format=test_format,
+            key_map=config_key_map or None,
+        )
+        unseen_species = {int(z) for atoms in test_raw.atoms for z in atoms} - set(species)
+        if unseen_species:
+            raise ValueError(
+                f"Test dataset contains species {sorted(unseen_species)} not present in training data"
+            )
+        test_graph_dataset = MolecularGraphDataset(
+            test_raw,
+            species=species,
+            cutoff=experiment.dataset.cutoff,
+            dtype=experiment.dataset.dtype,
+        )
     training_cfg = experiment.training
     overrides = {}
     if args.output is not None:
@@ -272,6 +295,8 @@ def _train_potential(args: argparse.Namespace) -> None:
         overrides["learning_rate"] = args.lr
     if args.validation_split is not None:
         overrides["validation_split"] = args.validation_split
+    if args.test_split is not None:
+        overrides["test_split"] = args.test_split
     if args.mixed_precision:
         overrides["mixed_precision"] = True
     if args.precision_dtype is not None:
@@ -322,6 +347,30 @@ def _train_potential(args: argparse.Namespace) -> None:
         baseline_requires_grad=baseline_trainable,
         residual_mode=experiment.model.residual_mode,
     )
+    if test_graph_dataset is not None:
+        test_metrics, predictions, targets = evaluate_potential_model(
+            trainer.model,
+            test_graph_dataset,
+            baseline=baseline,
+            residual_mode=experiment.model.residual_mode,
+            batch_size=training_cfg.batch_size,
+            num_workers=training_cfg.num_workers,
+            device=trainer.device,
+        )
+        trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+        plot_path = training_cfg.output_dir / "potential_test_predictions.png"
+        try:
+            plot_predictions_vs_targets(
+                predictions,
+                targets,
+                plot_path,
+                title="Potential predictions vs targets (test)",
+            )
+            if is_main_process():
+                LOGGER.info("Saved potential test scatter plot to %s", plot_path)
+        except Exception as exc:  # pragma: no cover - plotting best effort
+            if is_main_process():
+                LOGGER.warning("Failed to save potential test plot: %s", exc)
     if trainer.distributed.is_main_process():
         checkpoint_path = training_cfg.output_dir / "potential.pt"
         best_path = trainer.best_checkpoint_path
@@ -343,6 +392,12 @@ def _train_potential(args: argparse.Namespace) -> None:
         resolved_dataset_cfg = replace(experiment.dataset, path=dataset_path, species=species)
         if dataset_format is not None:
             resolved_dataset_cfg = replace(resolved_dataset_cfg, format=dataset_format)
+        if test_dataset_path is not None:
+            resolved_dataset_cfg = replace(resolved_dataset_cfg, test_path=test_dataset_path)
+        if args.test_dataset_format is not None:
+            resolved_dataset_cfg = replace(
+                resolved_dataset_cfg, test_format=args.test_dataset_format
+            )
         if config_key_map:
             resolved_dataset_cfg = replace(resolved_dataset_cfg, key_map=dict(config_key_map))
         resolved_model_cfg = replace(experiment.model)
@@ -446,6 +501,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Validation fraction (default: 0.1)",
+    )
+    train_parser.add_argument(
+        "--test-split",
+        type=float,
+        default=None,
+        help="Test fraction to hold out from the training dataset (default: 0.0)",
+    )
+    train_parser.add_argument(
+        "--test-dataset",
+        type=Path,
+        default=None,
+        help="Optional dataset used only for testing after training",
     )
     train_parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     train_parser.add_argument(
@@ -567,6 +634,24 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Override validation split",
+    )
+    potential_parser.add_argument(
+        "--test-split",
+        type=float,
+        default=None,
+        help="Hold out a fraction of the dataset for testing",
+    )
+    potential_parser.add_argument(
+        "--test-dataset",
+        type=Path,
+        default=None,
+        help="Path to a dedicated test dataset",
+    )
+    potential_parser.add_argument(
+        "--test-dataset-format",
+        choices=_DATASET_FORMAT_CHOICES,
+        default=None,
+        help="Override the format used to read the test dataset",
     )
     potential_parser.add_argument(
         "--seed", type=int, default=None, help="Random seed for reproducible runs"

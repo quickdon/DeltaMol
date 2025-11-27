@@ -280,6 +280,16 @@ Potential experiments honour the same `seed` and `parameter_init` options so
 multi-rank training stays reproducible and model initialisation is fully
 controlled from the configuration file or CLI overrides.
 
+### Evaluation and testing
+
+Both trainers support automated testing on held-out data. Add `--test-split` to
+reserve a fraction of the training dataset for final evaluation, or provide a
+dedicated file via `--test-dataset` (optionally overriding auto-detection with
+`--test-dataset-format`). After training, the best baseline or potential
+checkpoint is evaluated on the test data, logging MSE, RMSE, and MAE values and
+saving a `baseline_test_predictions.png` or `potential_test_predictions.png`
+scatter plot that compares predictions against the true energies.
+
 Distributed training is fully supported: launch the CLI with `torchrun` (for
 example `torchrun --nproc_per_node=4 python -m deltamol.main train-potential ...`)
 to perform single-node multi-GPU optimisation, or combine `--nproc_per_node`

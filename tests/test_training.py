@@ -197,6 +197,22 @@ def test_train_baseline_least_squares(tmp_path):
     assert trainer.last_checkpoint_path.exists()
 
 
+def test_train_baseline_records_test_metrics(tmp_path):
+    torch.manual_seed(0)
+    formula_vectors = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=torch.float32)
+    energies = torch.tensor([1.0, -1.0, 0.5], dtype=torch.float32)
+    config = TrainingConfig(
+        output_dir=tmp_path,
+        epochs=5,
+        batch_size=2,
+        validation_split=0.2,
+        test_split=0.34,
+        tensorboard=False,
+    )
+    trainer = train_baseline(formula_vectors, energies, species=[1, 6], config=config)
+    assert any(key.startswith("test/") for key in trainer.history)
+
+
 def test_training_seed_reproducibility(tmp_path):
     formula_vectors = torch.tensor(
         [

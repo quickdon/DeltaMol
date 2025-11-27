@@ -26,6 +26,24 @@ surfaces by embracing three core ideas:
 4. Train the hybrid SOAP-guided potential using the cached descriptors and the
    `train-potential` command.
 
+## Evaluation and testing
+
+DeltaMol ships reusable helpers for evaluating both the linear baseline and the
+hybrid potential. Regression metrics (MSE, RMSE, MAE) are computed via
+``deltamol.evaluation.metrics.compute_regression_metrics`` and convenience
+wrappers in ``deltamol.evaluation.testing`` load trained models, run inference
+on a held-out dataset, and (when requested) generate a scatter plot comparing
+predictions against ground truth values. The plot is saved alongside the model
+outputs to make quick sanity checks easy.
+
+Training commands now support both fractional test splits and externally
+supplied test datasets. Use ``--test-split`` to carve out a portion of the
+training data for post-training evaluation or ``--test-dataset`` /
+``--test-dataset-format`` to point at a dedicated test file. After fitting, the
+trainers automatically evaluate the best checkpoint on the test data, log the
+metrics, and save a ``*_test_predictions.png`` scatter plot in the run
+directory.
+
 Both trainers support resuming interrupted runs. Pass ``--resume-from`` on the
 CLI or set ``training.resume_from`` inside an experiment YAML file; either form
 accepts an output directory containing the latest checkpoint or an explicit

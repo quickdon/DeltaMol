@@ -22,6 +22,11 @@ try:  # pragma: no cover - optional dependency import guard
 except ImportError:  # pragma: no cover - tensorboard may be unavailable
     SummaryWriter = None  # type: ignore[assignment]
 
+from ..evaluation.testing import (
+    evaluate_baseline_model,
+    evaluate_potential_model,
+    plot_predictions_vs_targets,
+)
 from ..models.baseline import LinearAtomicBaseline, LinearBaselineConfig
 from ..models.potential import PotentialOutput
 from .datasets import MolecularGraphDataset, collate_graphs
@@ -391,6 +396,7 @@ class TrainingConfig:
     autocast_dtype: str = "float16"
     grad_scaler: bool = True
     validation_split: float = 0.1
+    test_split: float = 0.0
     seed: Optional[int] = None
     optimizer: str = "adam"
     weight_decay: float = 0.0
@@ -1058,20 +1064,36 @@ def train_baseline(
 ) -> Trainer:
     dataset = TensorDataset(formula_vectors, energies)
     val_size = int(len(dataset) * config.validation_split)
+    test_size = int(len(dataset) * config.test_split)
+    if val_size + test_size >= len(dataset):
+        raise ValueError("Validation and test splits leave no samples for training")
     split_generator: Optional[torch.Generator] = None
     if config.seed is not None:
         split_generator = torch.Generator()
         split_generator.manual_seed(int(config.seed))
-    if val_size > 0:
-        train_size = len(dataset) - val_size
-        train_dataset, val_dataset = random_split(
-            dataset, [train_size, val_size], generator=split_generator
-        )
+    if val_size > 0 or test_size > 0:
+        train_size = len(dataset) - val_size - test_size
+        if train_size <= 0:
+            raise ValueError("Insufficient data for requested validation/test splits")
+        splits = [train_size]
+        if val_size > 0:
+            splits.append(val_size)
+        if test_size > 0:
+            splits.append(test_size)
+        subsets = random_split(dataset, splits, generator=split_generator)
+        train_dataset = subsets[0]
+        subset_index = 1
+        val_dataset = None
+        if val_size > 0:
+            val_dataset = subsets[subset_index]
+            subset_index += 1
+        test_dataset = subsets[subset_index] if test_size > 0 else None
         train_indices = list(train_dataset.indices)  # type: ignore[attr-defined]
-        val_indices = list(val_dataset.indices)  # type: ignore[attr-defined]
+        val_indices = list(val_dataset.indices) if val_dataset is not None else []  # type: ignore[attr-defined]
     else:
         train_dataset = dataset
         val_dataset = None
+        test_dataset = None
         train_indices = list(range(len(dataset)))
         val_indices = []
     baseline_config = LinearBaselineConfig(species=tuple(species))
@@ -1142,6 +1164,26 @@ def train_baseline(
     else:
         val_loader = None
     trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
+    if test_dataset is not None and len(test_dataset) > 0:
+        test_metrics, predictions, targets = evaluate_baseline_model(
+            trainer.model,
+            test_dataset,
+            batch_size=config.batch_size,
+            device=trainer.device,
+            num_workers=config.num_workers,
+        )
+        trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+        plot_path = config.output_dir / "baseline_test_predictions.png"
+        try:
+            plot_predictions_vs_targets(
+                predictions,
+                targets,
+                plot_path,
+                title="Baseline predictions vs targets (test)",
+            )
+            _emit_info(f"Saved baseline test scatter plot to {plot_path}")
+        except Exception:  # pragma: no cover - plotting is best-effort
+            _emit_info("Failed to create baseline prediction plot; continuing without it")
     return trainer
 
 
@@ -1847,18 +1889,34 @@ def train_potential_model(
     residual_mode: bool = True,
 ) -> PotentialTrainer:
     val_size = int(len(dataset) * config.validation_split)
+    test_size = int(len(dataset) * config.test_split)
+    if val_size + test_size >= len(dataset):
+        raise ValueError("Validation and test splits leave no samples for training")
     split_generator: Optional[torch.Generator] = None
     if config.seed is not None:
         split_generator = torch.Generator()
         split_generator.manual_seed(int(config.seed))
-    if val_size > 0:
-        train_size = len(dataset) - val_size
-        train_dataset, val_dataset = random_split(
-            dataset, [train_size, val_size], generator=split_generator
-        )
+    if val_size > 0 or test_size > 0:
+        train_size = len(dataset) - val_size - test_size
+        if train_size <= 0:
+            raise ValueError("Insufficient data for requested validation/test splits")
+        splits = [train_size]
+        if val_size > 0:
+            splits.append(val_size)
+        if test_size > 0:
+            splits.append(test_size)
+        subsets = random_split(dataset, splits, generator=split_generator)
+        train_dataset = subsets[0]
+        subset_index = 1
+        val_dataset = None
+        if val_size > 0:
+            val_dataset = subsets[subset_index]
+            subset_index += 1
+        test_dataset = subsets[subset_index] if test_size > 0 else None
     else:
         train_dataset = dataset
         val_dataset = None
+        test_dataset = None
     trainer = PotentialTrainer(
         model,
         config,
@@ -1892,4 +1950,26 @@ def train_potential_model(
     else:
         val_loader = None
     trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
+    if test_dataset is not None and len(test_dataset) > 0:
+        test_metrics, predictions, targets = evaluate_potential_model(
+            trainer.model,
+            test_dataset,
+            baseline=baseline,
+            residual_mode=residual_mode,
+            batch_size=config.batch_size,
+            num_workers=config.num_workers,
+            device=trainer.device,
+        )
+        trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+        plot_path = config.output_dir / "potential_test_predictions.png"
+        try:
+            plot_predictions_vs_targets(
+                predictions,
+                targets,
+                plot_path,
+                title="Potential predictions vs targets (test)",
+            )
+            _emit_info(f"Saved potential test scatter plot to {plot_path}")
+        except Exception:  # pragma: no cover - plotting is best-effort
+            _emit_info("Failed to create potential prediction plot; continuing without it")
     return trainer

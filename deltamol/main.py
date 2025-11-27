@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import torch
+from torch.utils.data import TensorDataset
 
 from .config.manager import save_config
 from .data.io import load_dataset
 from .models.baseline import build_formula_vector
+from .evaluation.testing import evaluate_baseline_model, plot_predictions_vs_targets
 from .training.pipeline import TrainingConfig, train_baseline
 from .utils import is_main_process
 from .utils.logging import configure_logging
@@ -25,12 +27,15 @@ def run_baseline_training(
     *,
     dataset_format: str | None = None,
     dataset_key_map: dict[str, str] | None = None,
+    test_dataset: Path | None = None,
+    test_dataset_format: str | None = None,
     epochs: Optional[int] = None,
     batch_size: Optional[int] = None,
     update_frequency: Optional[int] = None,
     num_workers: Optional[int] = None,
     learning_rate: Optional[float] = None,
     validation_split: Optional[float] = None,
+    test_split: Optional[float] = None,
     solver: Optional[str] = None,
     early_stopping_patience: Optional[int] = None,
     early_stopping_min_delta: Optional[float] = None,
@@ -53,6 +58,25 @@ def run_baseline_training(
     if dataset.energies is None:
         raise ValueError("Baseline training requires energies in the dataset")
     species = sorted({int(z) for atoms in dataset.atoms for z in atoms})
+    test_dataset_tensors: TensorDataset | None = None
+    if test_dataset is not None:
+        test_data = load_dataset(
+            test_dataset,
+            format=test_dataset_format or dataset_format,
+            key_map=dataset_key_map,
+        )
+        if test_data.energies is None:
+            raise ValueError("Test dataset must include energies for evaluation")
+        unknown_species = {int(z) for atoms in test_data.atoms for z in atoms} - set(species)
+        if unknown_species:
+            raise ValueError(
+                f"Test dataset contains species {sorted(unknown_species)} not seen in training"
+            )
+        test_formula_vectors = torch.stack(
+            [build_formula_vector(atoms, species=species) for atoms in test_data.atoms]
+        )
+        test_energies_tensor = torch.tensor(test_data.energies, dtype=torch.float32)
+        test_dataset_tensors = TensorDataset(test_formula_vectors, test_energies_tensor)
     if is_main_process():
         LOGGER.info(
             "Starting baseline training on %d molecules with %d species",
@@ -93,6 +117,7 @@ def run_baseline_training(
             update_frequency=update_frequency if update_frequency is not None else 1,
             num_workers=num_workers if num_workers is not None else 0,
             validation_split=validation_split if validation_split is not None else 0.1,
+            test_split=test_split if test_split is not None else 0.0,
             solver=solver if solver is not None else "optimizer",
             early_stopping_patience=(
                 early_stopping_patience if early_stopping_patience is not None else 0
@@ -137,6 +162,7 @@ def run_baseline_training(
                 if validation_split is not None
                 else config.validation_split
             ),
+            test_split=(test_split if test_split is not None else config.test_split),
             solver=solver if solver is not None else config.solver,
             early_stopping_patience=(
                 early_stopping_patience
@@ -158,6 +184,28 @@ def run_baseline_training(
             **override_kwargs,
         )
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
+    if test_dataset_tensors is not None:
+        test_metrics, predictions, targets = evaluate_baseline_model(
+            trainer.model,
+            test_dataset_tensors,
+            batch_size=config.batch_size,
+            num_workers=config.num_workers,
+            device=trainer.device,
+        )
+        trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+        plot_path = config.output_dir / "baseline_test_predictions.png"
+        try:
+            plot_predictions_vs_targets(
+                predictions,
+                targets,
+                plot_path,
+                title="Baseline predictions vs targets (test)",
+            )
+            if is_main_process():
+                LOGGER.info("Saved baseline test scatter plot to %s", plot_path)
+        except Exception as exc:  # pragma: no cover - best effort plotting
+            if is_main_process():
+                LOGGER.warning("Failed to save baseline test plot: %s", exc)
     if trainer.distributed.is_main_process():
         best_path = trainer.best_checkpoint_path
         last_path = trainer.last_checkpoint_path
