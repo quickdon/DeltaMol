@@ -80,18 +80,26 @@ def evaluate_potential_model(
     model.eval()
     if baseline is not None:
         baseline.eval()
-    predictions = []
-    targets = []
-    with torch.no_grad():
-        for batch in loader:
-            batch = {
-                key: value.to(model_device) if isinstance(value, torch.Tensor) else value
-                for key, value in batch.items()
-            }
-            energy_target = batch["energies"]
-            baseline_energy = None
-            if baseline is not None and residual_mode:
-                baseline_energy = baseline(batch["formula_vectors"])
+    energy_predictions = []
+    energy_targets = []
+    force_predictions = []
+    force_targets = []
+    for batch in loader:
+        batch = {
+            key: value.to(model_device) if isinstance(value, torch.Tensor) else value
+            for key, value in batch.items()
+        }
+        forces_available = batch.get("forces") is not None
+        positions = batch["positions"]
+        if forces_available:
+            positions = positions.detach().clone().requires_grad_(True)
+            batch["positions"] = positions
+        energy_target = batch["energies"]
+        baseline_energy = None
+        if baseline is not None and residual_mode:
+            baseline_energy = baseline(batch["formula_vectors"])
+        context = torch.enable_grad() if forces_available else torch.no_grad()
+        with context:
             output = model(
                 batch["node_indices"],
                 batch["positions"],
@@ -101,11 +109,35 @@ def evaluate_potential_model(
             energy_pred = output.energy
             if baseline_energy is not None:
                 energy_pred = energy_pred + baseline_energy
-            predictions.append(energy_pred.detach().cpu())
-            targets.append(energy_target.detach().cpu())
-    all_predictions = torch.cat(predictions) if predictions else torch.tensor([])
-    all_targets = torch.cat(targets) if targets else torch.tensor([])
+        energy_predictions.append(energy_pred.detach().cpu())
+        energy_targets.append(energy_target.detach().cpu())
+        if forces_available:
+            mask = batch["mask"].to(model_device)
+            mask_expanded = mask.unsqueeze(-1).expand_as(batch["positions"])
+            if output.forces is not None:
+                predicted_forces = output.forces
+            else:
+                grads = torch.autograd.grad(
+                    energy_pred.sum(),
+                    positions,
+                    create_graph=False,
+                    retain_graph=False,
+                )[0]
+                predicted_forces = -grads
+            target_forces = batch["forces"].to(model_device)
+            valid_mask = mask_expanded.bool()
+            predicted_forces = predicted_forces[valid_mask]
+            target_forces = target_forces[valid_mask]
+            force_predictions.append(predicted_forces.detach().cpu())
+            force_targets.append(target_forces.detach().cpu())
+    all_predictions = torch.cat(energy_predictions) if energy_predictions else torch.tensor([])
+    all_targets = torch.cat(energy_targets) if energy_targets else torch.tensor([])
     metrics = compute_regression_metrics(all_predictions, all_targets)
+    if force_predictions:
+        all_force_predictions = torch.cat(force_predictions)
+        all_force_targets = torch.cat(force_targets)
+        force_metrics = compute_regression_metrics(all_force_predictions, all_force_targets)
+        metrics.update({f"force_{name}": value for name, value in force_metrics.items()})
     return metrics, all_predictions, all_targets
 
 

@@ -46,3 +46,34 @@ def test_evaluate_potential_model(tmp_path):
     saved_path = plot_predictions_vs_targets(predictions, targets, plot_path)
     assert saved_path.exists()
 
+
+def test_evaluate_potential_model_with_forces():
+    class DummyForcePotential(torch.nn.Module):
+        def forward(self, node_indices, positions, adjacency, mask):
+            atom_counts = mask.sum(dim=1).float()
+            forces = torch.ones_like(positions) * mask.unsqueeze(-1)
+            return PotentialOutput(energy=atom_counts, forces=forces)
+
+    dataset = MolecularDataset(
+        atoms=np.array([np.array([1, 1]), np.array([1])], dtype=object),
+        coordinates=np.array(
+            [
+                np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]]),
+                np.array([[0.0, 0.0, 0.0]]),
+            ],
+            dtype=object,
+        ),
+        energies=np.array([2.0, 1.0]),
+        forces=np.array(
+            [
+                np.array([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]),
+                np.array([[1.0, 1.0, 1.0]]),
+            ],
+            dtype=object,
+        ),
+    )
+    graph_dataset = MolecularGraphDataset(dataset, species=(1,))
+    model = DummyForcePotential()
+    metrics, _, _ = evaluate_potential_model(model, graph_dataset)
+    assert metrics["force_mae"] < 1e-6
+
