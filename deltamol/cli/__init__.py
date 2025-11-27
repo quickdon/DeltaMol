@@ -194,7 +194,8 @@ def _train_baseline(args: argparse.Namespace) -> None:
         else:
             output_dir = Path("runs/baseline")
     if args.resume_from is not None and args.output is None:
-        output_dir = args.resume_from
+        resume_path = Path(args.resume_from)
+        output_dir = resume_path.parent if resume_path.is_file() else resume_path
     run_baseline_training(
         args.dataset,
         output_dir,
@@ -257,7 +258,8 @@ def _train_potential(args: argparse.Namespace) -> None:
     if args.output is not None:
         overrides["output_dir"] = args.output
     elif args.resume_from is not None:
-        overrides["output_dir"] = args.resume_from
+        resume_path = Path(args.resume_from)
+        overrides["output_dir"] = resume_path.parent if resume_path.is_file() else resume_path
     if args.epochs is not None:
         overrides["epochs"] = args.epochs
     if args.batch_size is not None:
