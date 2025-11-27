@@ -193,6 +193,8 @@ def _train_baseline(args: argparse.Namespace) -> None:
             output_dir = config.output_dir
         else:
             output_dir = Path("runs/baseline")
+    if args.resume_from is not None and args.output is None:
+        output_dir = args.resume_from
     run_baseline_training(
         args.dataset,
         output_dir,
@@ -216,6 +218,7 @@ def _train_baseline(args: argparse.Namespace) -> None:
         tensorboard=False if args.no_tensorboard else None,
         seed=args.seed,
         parameter_init=parameter_init,
+        resume_from=args.resume_from,
         config=config,
     )
 
@@ -253,6 +256,8 @@ def _train_potential(args: argparse.Namespace) -> None:
     overrides = {}
     if args.output is not None:
         overrides["output_dir"] = args.output
+    elif args.resume_from is not None:
+        overrides["output_dir"] = args.resume_from
     if args.epochs is not None:
         overrides["epochs"] = args.epochs
     if args.batch_size is not None:
@@ -282,6 +287,8 @@ def _train_potential(args: argparse.Namespace) -> None:
             overrides["parameter_init"] = None
         else:
             overrides["parameter_init"] = args.parameter_init
+    if args.resume_from is not None:
+        overrides["resume_from"] = args.resume_from
     if args.residual_mode is not None:
         experiment = replace(experiment, model=replace(experiment.model, residual_mode=args.residual_mode))
     if overrides:
@@ -394,6 +401,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Map dataset fields to canonical keys (repeatable)",
     )
     train_parser.add_argument("--output", type=Path, default=None)
+    train_parser.add_argument(
+        "--resume-from",
+        type=Path,
+        default=None,
+        help="Path to a checkpoint file or output directory to resume baseline training",
+    )
     train_parser.add_argument("--config", type=Path, help="YAML file with training overrides")
     train_parser.add_argument("--epochs", type=int, default=None, help="Number of epochs (default: 200)")
     train_parser.add_argument("--batch-size", type=int, default=None, help="Batch size (default: 128)")
@@ -523,6 +536,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Override the output directory defined in the config",
+    )
+    potential_parser.add_argument(
+        "--resume-from",
+        type=Path,
+        default=None,
+        help="Path to a checkpoint file or output directory to resume potential training",
     )
     potential_parser.add_argument("--epochs", type=int, default=None, help="Override epochs")
     potential_parser.add_argument(

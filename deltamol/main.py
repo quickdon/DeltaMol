@@ -43,6 +43,7 @@ def run_baseline_training(
     tensorboard: Optional[bool] = None,
     seed: Optional[int] = None,
     parameter_init: Optional[str] = None,
+    resume_from: Optional[Path] = None,
     config: TrainingConfig | None = None,
 ) -> None:
     """Train the linear atomic baseline on a dataset."""
@@ -81,6 +82,8 @@ def run_baseline_training(
         override_kwargs["seed"] = seed
     if parameter_init is not None:
         override_kwargs["parameter_init"] = parameter_init
+    if resume_from is not None:
+        override_kwargs["resume_from"] = resume_from
     if config is None:
         config = TrainingConfig(
             output_dir=output_dir,
@@ -151,6 +154,7 @@ def run_baseline_training(
             parameter_init=(
                 parameter_init if parameter_init is not None else config.parameter_init
             ),
+            resume_from=resume_from if resume_from is not None else config.resume_from,
             **override_kwargs,
         )
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
