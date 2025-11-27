@@ -290,6 +290,20 @@ class WarmupDecayScheduler:
         return list(self.last_lrs)
 
 
+def _build_ddp_kwargs(config: DistributedConfig, device: torch.device) -> Dict[str, object]:
+    """Construct a consistent kwargs dictionary for DDP initialisation."""
+
+    ddp_kwargs: Dict[str, object] = {
+        "find_unused_parameters": config.find_unused_parameters,
+        "broadcast_buffers": config.broadcast_buffers,
+    }
+    if device.type == "cuda":
+        device_index = device.index if device.index is not None else torch.cuda.current_device()
+        ddp_kwargs["device_ids"] = [device_index]
+        ddp_kwargs["output_device"] = device_index
+    return ddp_kwargs
+
+
 class _PotentialDDPWrapper(nn.Module):
     """Wrapper that exposes baseline parameters to DDP while delegating forwards."""
 
@@ -432,14 +446,7 @@ class Trainer:
             _emit_info(f"Applied parameter initialisation: {config.parameter_init}")
         self.ddp_model: Optional[nn.parallel.DistributedDataParallel]
         if self.distributed.enabled:
-            ddp_kwargs = {
-                "find_unused_parameters": config.distributed.find_unused_parameters,
-                "broadcast_buffers": config.distributed.broadcast_buffers,
-            }
-            if self.device.type == "cuda":
-                device_index = self.device.index if self.device.index is not None else 0
-                ddp_kwargs["device_ids"] = [device_index]
-                ddp_kwargs["output_device"] = device_index
+            ddp_kwargs = _build_ddp_kwargs(config.distributed, self.device)
             self.ddp_model = nn.parallel.DistributedDataParallel(self.model, **ddp_kwargs)
             param_source = self.ddp_model.parameters()
         else:
@@ -1212,17 +1219,12 @@ class PotentialTrainer:
                 self.baseline.eval()
                 for param in self.baseline.parameters():
                     param.requires_grad_(False)
+            if self.distributed.enabled:
+                self.distributed.sync_module_state(self.baseline)
         self.ddp_model: Optional[nn.parallel.DistributedDataParallel]
         if self.distributed.enabled:
             wrapper = _PotentialDDPWrapper(self.model, self.baseline)
-            ddp_kwargs = {
-                "find_unused_parameters": config.distributed.find_unused_parameters,
-                "broadcast_buffers": config.distributed.broadcast_buffers,
-            }
-            if self.device.type == "cuda":
-                device_index = self.device.index if self.device.index is not None else 0
-                ddp_kwargs["device_ids"] = [device_index]
-                ddp_kwargs["output_device"] = device_index
+            ddp_kwargs = _build_ddp_kwargs(config.distributed, self.device)
             self.ddp_model = nn.parallel.DistributedDataParallel(wrapper, **ddp_kwargs)
             param_source = self.ddp_model.parameters()
         else:
