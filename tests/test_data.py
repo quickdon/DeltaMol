@@ -92,6 +92,42 @@ def test_load_dataset_with_key_overrides(tmp_path):
     assert dataset.forces[1].shape == (2, 3)
 
 
+def test_md_style_dataset_expands_single_atoms(tmp_path):
+    atoms = np.array([1, 6, 1], dtype=np.int64)
+    coordinates = np.random.rand(5, 3, 3).astype(np.float32)
+    energies = np.linspace(-10.0, -8.0, num=5, dtype=np.float32)
+    forces = np.random.rand(5, 3, 3).astype(np.float32)
+    dataset_path = tmp_path / "traj.npz"
+    np.savez(dataset_path, atoms=atoms, coordinates=coordinates, energies=energies, forces=forces)
+
+    dataset = load_npz_dataset(dataset_path)
+
+    assert dataset.atoms.shape[0] == 5
+    assert all(np.array_equal(entry, atoms) for entry in dataset.atoms)
+    assert dataset.coordinates.shape[0] == 5
+    assert dataset.energies.shape == (5,)
+    assert dataset.forces.shape == (5, 3, 3)
+
+
+def test_loading_multiple_npz_files(tmp_path):
+    atoms_a = np.array([np.array([1, 1], dtype=np.int64)], dtype=object)
+    coords_a = np.array([np.zeros((2, 3), dtype=np.float32)])
+    energies_a = np.array([-1.0], dtype=np.float32)
+    atoms_b = np.array([np.array([8], dtype=np.int64)], dtype=object)
+    coords_b = np.array([np.ones((1, 3), dtype=np.float32)])
+    energies_b = np.array([-5.0], dtype=np.float32)
+    file_a = tmp_path / "a.npz"
+    file_b = tmp_path / "b.npz"
+    np.savez(file_a, atoms=atoms_a, coordinates=coords_a, energies=energies_a)
+    np.savez(file_b, atoms=atoms_b, coordinates=coords_b, energies=energies_b)
+
+    combined = load_dataset(tmp_path, format="npz")
+
+    assert combined.atoms.shape[0] == 2
+    assert combined.coordinates.shape[0] == 2
+    assert combined.energies.tolist() == pytest.approx([-1.0, -5.0])
+
+
 def test_molecular_graph_dataset_and_collate():
     atoms = np.array([
         np.array([1, 8, 1]),
