@@ -15,7 +15,11 @@ surfaces by embracing three core ideas:
 1. Prepare a dataset that exposes the canonical ``atoms``, ``coordinates``, and
    ``energies`` fields (``forces`` is optional). Files stored as NumPy ``.npz``
    or ``.npy`` archives, JSON/YAML blobs, or Torch checkpoints are all
-   supported.
+   supported. MD-style ``.npz`` trajectories with a single atomic-number array
+   or a shared per-atom force frame are broadcast across all coordinate frames
+   during loading, so you can point the loader at raw MD outputs without
+   manually reshaping them. Pass either a single file, a directory, or multiple
+   paths to load and concatenate several molecules at once.
 2. Cache descriptors using ``python -m deltamol.main cache-descriptors``. The
    cache is stored as an HDF5 file.
 3. Train the baseline using ``python -m deltamol.main train-baseline``.

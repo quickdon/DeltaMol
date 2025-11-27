@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Optional
+from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence
 
 import numpy as np
 
@@ -135,6 +135,40 @@ def _resolve_field(
     return None
 
 
+def _broadcast_atomic_numbers(atoms: np.ndarray, target: int) -> np.ndarray:
+    if atoms.dtype != object:
+        atoms = np.array([np.asarray(atoms, dtype=int)], dtype=object)
+    else:
+        atoms = np.array([np.asarray(entry, dtype=int) for entry in atoms], dtype=object)
+    length = len(atoms)
+    if length == target:
+        return atoms
+    if length == 1:
+        return np.array([atoms[0] for _ in range(target)], dtype=object)
+    raise ValueError("Atoms must contain one entry per molecule or a single shared entry")
+
+
+def _broadcast_optional_array(
+    name: str, values: Optional[np.ndarray], target: int
+) -> Optional[np.ndarray]:
+    if values is None:
+        return None
+    if np.isscalar(values):
+        return np.full(target, float(values), dtype=float)
+    if isinstance(values, np.ndarray) and values.ndim == 0:
+        return np.full(target, float(values), dtype=float)
+    if isinstance(values, np.ndarray) and values.ndim == 2 and values.shape[-1] == 3:
+        values = np.expand_dims(values, 0)
+    length = len(values)
+    if length == target:
+        return values
+    if length == 1:
+        if values.dtype == object:
+            return np.array([values[0] for _ in range(target)], dtype=object)
+        return np.repeat(values, target, axis=0)
+    raise ValueError(f"{name} must contain one entry per molecule or a single shared entry")
+
+
 def molecular_dataset_from_dict(
     mapping: Mapping[str, Any],
     *,
@@ -143,19 +177,20 @@ def molecular_dataset_from_dict(
     data = dict(mapping)
     atoms = _coerce_atoms(_resolve_field(data, "atoms", key_map))
     coordinates = _coerce_coordinates(_resolve_field(data, "coordinates", key_map))
+    if isinstance(coordinates, np.ndarray) and coordinates.ndim == 2 and coordinates.shape[-1] == 3:
+        coordinates = np.expand_dims(coordinates, 0)
+    num_entries = len(coordinates)
+    atoms = _broadcast_atomic_numbers(atoms, num_entries)
     energies_raw = _resolve_field(data, "energies", key_map, required=False)
     forces_raw = _resolve_field(data, "forces", key_map, required=False)
-    energies = (
-        np.asarray(energies_raw, dtype=float) if energies_raw is not None else None
+    energies = _broadcast_optional_array(
+        "Energies",
+        np.asarray(energies_raw, dtype=float) if energies_raw is not None else None,
+        num_entries,
     )
-    forces = _coerce_optional(forces_raw) if forces_raw is not None else None
-    num_molecules = len(atoms)
-    if len(coordinates) != num_molecules:
-        raise ValueError("Coordinates must contain one entry per molecule")
-    if energies is not None and len(energies) != num_molecules:
-        raise ValueError("Energies must contain one value per molecule")
-    if forces is not None and len(forces) != num_molecules:
-        raise ValueError("Forces must contain one array per molecule")
+    forces = _broadcast_optional_array(
+        "Forces", _coerce_optional(forces_raw) if forces_raw is not None else None, num_entries
+    )
     metadata: Dict[str, Any] = {}
     if "metadata" in data:
         metadata_value = data.pop("metadata")
@@ -218,6 +253,51 @@ _LOADERS: Dict[str, Callable[[Path], Dict[str, Any]]] = {
 }
 
 
+def _select_loader(dataset_path: Path, resolved_format: str) -> Callable[[Path], Dict[str, Any]]:
+    if resolved_format == "auto":
+        suffix = dataset_path.suffix.lstrip(".").lower()
+        if suffix not in _LOADERS:
+            raise ValueError(
+                f"Could not infer dataset format from suffix '.{suffix}'. "
+                "Provide --dataset-format to override."
+            )
+        return _LOADERS[suffix]
+    if resolved_format not in _LOADERS:
+        raise ValueError(
+            f"Unsupported dataset format '{resolved_format}'. Supported formats: {sorted(_LOADERS)}"
+        )
+    return _LOADERS[resolved_format]
+
+
+def _concat_datasets(datasets: Sequence[MolecularDataset]) -> MolecularDataset:
+    if not datasets:
+        raise ValueError("At least one dataset is required for concatenation")
+    atoms = np.array([atom for ds in datasets for atom in ds.atoms], dtype=object)
+    coordinates = np.array(
+        [coords for ds in datasets for coords in ds.coordinates], dtype=object
+    )
+    energies = None
+    forces = None
+    metadata_entries = []
+    if any(ds.energies is not None for ds in datasets):
+        energies_list = [ds.energies for ds in datasets if ds.energies is not None]
+        energies = np.concatenate(energies_list, axis=0)
+    if any(ds.forces is not None for ds in datasets):
+        forces_list = [ds.forces for ds in datasets if ds.forces is not None]
+        forces = np.concatenate(forces_list, axis=0)
+    for ds in datasets:
+        if ds.metadata is not None:
+            metadata_entries.append(ds.metadata)
+    metadata = {"datasets": metadata_entries} if metadata_entries else None
+    return MolecularDataset(
+        atoms=atoms,
+        coordinates=coordinates,
+        energies=energies,
+        forces=forces,
+        metadata=metadata,
+    )
+
+
 def load_dataset(
     path: str | Path,
     *,
@@ -238,23 +318,30 @@ def load_dataset(
         ``forces``) to the field names used in the source file.
     """
 
-    dataset_path = Path(path)
     resolved_format = (format or "auto").lower()
-    loader: Callable[[Path], Dict[str, Any]]
-    if resolved_format == "auto":
-        suffix = dataset_path.suffix.lstrip(".").lower()
-        if suffix not in _LOADERS:
+    if isinstance(path, Sequence) and not isinstance(path, (str, bytes, Path)):
+        datasets = [load_dataset(p, format=resolved_format, key_map=key_map) for p in path]
+        return _concat_datasets(datasets)
+    dataset_path = Path(path)
+    if dataset_path.is_dir():
+        datasets = []
+        for file_path in sorted(dataset_path.iterdir()):
+            if not file_path.is_file():
+                continue
+            try:
+                loader = _select_loader(file_path, resolved_format)
+            except ValueError:
+                continue
+            raw = loader(file_path)
+            if not isinstance(raw, Mapping):
+                raise TypeError("Dataset loader must return a mapping of arrays")
+            datasets.append(molecular_dataset_from_dict(raw, key_map=key_map))
+        if not datasets:
             raise ValueError(
-                f"Could not infer dataset format from suffix '.{suffix}'. "
-                "Provide --dataset-format to override."
+                f"No datasets matching format '{resolved_format}' were found in {dataset_path}"
             )
-        loader = _LOADERS[suffix]
-    else:
-        if resolved_format not in _LOADERS:
-            raise ValueError(
-                f"Unsupported dataset format '{format}'. Supported formats: {sorted(_LOADERS)}"
-            )
-        loader = _LOADERS[resolved_format]
+        return _concat_datasets(datasets)
+    loader = _select_loader(dataset_path, resolved_format)
     raw = loader(dataset_path)
     if not isinstance(raw, Mapping):
         raise TypeError("Dataset loader must return a mapping of arrays")

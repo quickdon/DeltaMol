@@ -115,8 +115,14 @@ information remains available via the dataset metadata and the forces field can
 be omitted when a source dataset only provides energies. Files stored as NPZ,
 NPY, JSON, YAML, or Torch checkpoints are recognised automatically based on the
 extension, and the CLI exposes `--dataset-format` to override auto-detection
-when necessary. If a dataset uses different field names you can map them to the
-canonical keys directly on the command line:
+when necessary. The loader understands MD-style `.npz` archives where a single
+atomic-number array or per-atom force frame is shared across a trajectory; the
+array is broadcast across all coordinate frames so you can load MD trajectories
+without reshaping them. Dataset paths can point to either a single file, a
+directory of supported files, or a space-separated list of paths; all matching
+datasets are loaded and concatenated to simplify training across multiple
+molecules at once. If a dataset uses different field names you can map them to
+the canonical keys directly on the command line:
 
 ```bash
 python -m deltamol.main train-baseline data.json \
