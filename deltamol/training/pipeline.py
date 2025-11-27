@@ -290,19 +290,11 @@ class WarmupDecayScheduler:
         return list(self.last_lrs)
 
 
-def _build_ddp_kwargs(
-    config: DistributedConfig, device: torch.device, *, force_find_unused: bool = False
-) -> Dict[str, object]:
-    """Construct a consistent kwargs dictionary for DDP initialisation.
-
-    ``force_find_unused`` ensures we enable parameter discovery when wrapping modules that
-    contain parameters not touched during the wrapped ``forward`` (e.g. the baseline
-    module in potential training). This avoids hangs from unused parameters while still
-    respecting the explicit configuration when it is already True.
-    """
+def _build_ddp_kwargs(config: DistributedConfig, device: torch.device) -> Dict[str, object]:
+    """Construct a consistent kwargs dictionary for DDP initialisation."""
 
     ddp_kwargs: Dict[str, object] = {
-        "find_unused_parameters": config.find_unused_parameters or force_find_unused,
+        "find_unused_parameters": config.find_unused_parameters,
         "broadcast_buffers": config.broadcast_buffers,
     }
     if device.type == "cuda":
@@ -1232,9 +1224,7 @@ class PotentialTrainer:
         self.ddp_model: Optional[nn.parallel.DistributedDataParallel]
         if self.distributed.enabled:
             wrapper = _PotentialDDPWrapper(self.model, self.baseline)
-            ddp_kwargs = _build_ddp_kwargs(
-                config.distributed, self.device, force_find_unused=self.baseline is not None
-            )
+            ddp_kwargs = _build_ddp_kwargs(config.distributed, self.device)
             self.ddp_model = nn.parallel.DistributedDataParallel(wrapper, **ddp_kwargs)
             param_source = self.ddp_model.parameters()
         else:
