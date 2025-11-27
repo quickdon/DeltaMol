@@ -14,6 +14,8 @@ class DatasetConfig:
 
     path: Optional[Path] = None
     format: Optional[str] = None
+    test_path: Optional[Path] = None
+    test_format: Optional[str] = None
     cutoff: float = 5.0
     dtype: str = "float32"
     species: Optional[Tuple[int, ...]] = None
