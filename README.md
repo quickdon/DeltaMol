@@ -96,6 +96,19 @@ The command will:
    (latest weights) so you can transfer the best model into potential training
    while keeping a checkpoint that is ready to resume optimisation.
 
+Resume an interrupted run by pointing `--resume-from` to either the previous
+output directory or a specific checkpoint file:
+
+```bash
+python -m deltamol.main train-baseline data.npz \
+    --output runs/baseline \
+    --resume-from runs/baseline
+```
+
+When an output directory is provided the trainer will auto-discover
+`baseline_last.pt` and continue training from the saved epoch, restoring the
+optimizer, scheduler, and (when enabled) gradient scaler states.
+
 DeltaMol standardises raw datasets by looking for the canonical fields
 `atoms`, `coordinates`, `energies`, and (optionally) `forces`. Any additional
 information remains available via the dataset metadata and the forces field can
@@ -231,7 +244,10 @@ experiment, and persist an `experiment.yaml` file in the output directory that
 captures the resolved dataset, model, and training parameters. In addition to
 the copied `potential.pt` convenience file, the run directory will contain
 `potential_best.pt` and `potential_last.pt` so you can evaluate the best model
-and resume from the final optimiser state with minimal effort. Mixed precision
+and resume from the final optimiser state with minimal effort. Resume runs by
+adding `--resume-from` on the CLI or setting `training.resume_from` in the
+YAML; both forms accept either a full checkpoint path or an output directory
+that contains `potential_last.pt`. Mixed precision
 can be toggled directly in the YAML file via the `mixed_precision`,
 `autocast_dtype`, and `grad_scaler` fields or overridden on the CLI with
 `--mixed-precision`, `--precision-dtype`, and `--no-grad-scaler`. When a

@@ -398,6 +398,7 @@ class TrainingConfig:
     early_stopping_min_delta: float = 0.0
     best_checkpoint_name: str = "best.pt"
     last_checkpoint_name: str = "last.pt"
+    resume_from: Optional[Path] = None
     distributed: DistributedConfig = field(default_factory=DistributedConfig)
     tensorboard: bool = True
 
@@ -469,6 +470,9 @@ class Trainer:
         self._global_batches = 0
         self._optimizer_steps = 0
         self._eval_batches = 0
+        self._current_epoch = 0
+        self._start_epoch = 0
+        self._pending_scheduler_state: Optional[Dict[str, object]] = None
         self._summary_writer: Optional[SummaryWriter]
         self._tensorboard_dir: Optional[Path] = None
         if self.config.tensorboard and self.distributed.is_main_process():
@@ -516,6 +520,7 @@ class Trainer:
                 amp_state,
             )
         )
+        self._maybe_resume_from_checkpoint()
 
     @property
     def data_loader_generator(self) -> Optional[torch.Generator]:
@@ -558,6 +563,12 @@ class Trainer:
         except TypeError:
             steps_per_epoch = None
         self.scheduler = _maybe_build_scheduler(self.optimizer, self.config, steps_per_epoch)
+        if self._pending_scheduler_state is not None and self.scheduler is not None:
+            try:
+                self.scheduler.load_state_dict(self._pending_scheduler_state)
+            except Exception:  # pragma: no cover - defensive
+                _emit_info("Scheduler state in checkpoint is incompatible; skipping scheduler resume")
+            self._pending_scheduler_state = None
         summary = f"Starting training for {self.config.epochs} epochs on {train_samples} samples"
         if val_loader is not None:
             summary += f" with {val_samples} validation samples"
@@ -577,13 +588,20 @@ class Trainer:
         )
         if effective_batch != self.config.batch_size:
             summary += f", effective batch={effective_batch}"
+        if self._start_epoch > 0:
+            summary += f", resuming from epoch {self._start_epoch}"
         _emit_info(summary)
         _emit_info("Entering training loop")
         start_time = perf_counter()
         last_train_loss = math.nan
         last_val_loss: Optional[float] = None
         log_interval = max(int(self.config.log_every), 1)
-        for epoch in range(1, self.config.epochs + 1):
+        start_epoch = int(self._start_epoch) + 1
+        if start_epoch > self.config.epochs:
+            _emit_info("All configured epochs have already been completed; skipping training loop")
+            return self.history
+        for epoch in range(start_epoch, self.config.epochs + 1):
+            self._current_epoch = epoch
             if train_sampler is not None and hasattr(train_sampler, "set_epoch"):
                 train_sampler.set_epoch(epoch)
             epoch_start = perf_counter()
@@ -752,7 +770,17 @@ class Trainer:
     def _checkpoint_state(self) -> Dict[str, object]:
         return {
             "model_state": self.model.state_dict(),
+            "optimizer_state": self.optimizer.state_dict(),
+            "scheduler_state": self.scheduler.state_dict() if self.scheduler is not None else None,
+            "scaler_state": self.scaler.state_dict() if self.scaler is not None else None,
             "config": self.config,
+            "epoch": self._current_epoch,
+            "global_batches": self._global_batches,
+            "optimizer_steps": self._optimizer_steps,
+            "eval_batches": self._eval_batches,
+            "best_metric": self._best_metric,
+            "early_stop_counter": self._early_stop_counter,
+            "history": dict(self.history),
         }
 
     def _save_checkpoint(self, path: Path) -> Path:
@@ -762,6 +790,164 @@ class Trainer:
 
     def _resolve_checkpoint_name(self, filename: str) -> Path:
         return self.output_dir / filename
+
+    def _resolve_resume_checkpoint(self, resume_from: Path) -> Path:
+        path = Path(resume_from)
+        if path.is_file():
+            return path
+        if not path.exists():
+            raise FileNotFoundError(f"Resume path '{resume_from}' does not exist")
+        candidates = []
+        if self.config.last_checkpoint_name:
+            candidates.append(path / self.config.last_checkpoint_name)
+        if self.config.best_checkpoint_name:
+            candidates.append(path / self.config.best_checkpoint_name)
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        raise FileNotFoundError(
+            f"No checkpoint found in '{resume_from}'; checked {[c.name for c in candidates]}"
+        )
+
+    def _apply_checkpoint_state(self, state: Dict[str, object], *, load_scheduler: bool = True) -> None:
+        model_state = state.get("model_state")
+        if model_state is not None:
+            self.model.load_state_dict(model_state)  # type: ignore[arg-type]
+            if self.distributed.enabled:
+                self.distributed.sync_module_state(self.model)
+        if self.baseline is not None:
+            baseline_state = state.get("baseline_state")
+            if baseline_state is not None:
+                try:
+                    self.baseline.load_state_dict(baseline_state)  # type: ignore[arg-type]
+                except Exception:  # pragma: no cover - defensive
+                    _emit_info("Baseline state in checkpoint is incompatible; skipping baseline resume")
+            self.baseline_trainable = bool(state.get("baseline_trainable", self.baseline_trainable))
+        optimizer_state = state.get("optimizer_state")
+        if optimizer_state is not None:
+            try:
+                self.optimizer.load_state_dict(optimizer_state)  # type: ignore[arg-type]
+            except ValueError:
+                _emit_info("Optimizer state in checkpoint is incompatible; skipping optimizer resume")
+        scaler_state = state.get("scaler_state")
+        if scaler_state is not None and self.scaler is not None:
+            try:
+                self.scaler.load_state_dict(scaler_state)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover - defensive
+                _emit_info("AMP scaler state in checkpoint is incompatible; skipping scaler resume")
+        scheduler_state = state.get("scheduler_state")
+        if load_scheduler and scheduler_state is not None and self.scheduler is not None:
+            try:
+                self.scheduler.load_state_dict(scheduler_state)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover - defensive
+                _emit_info("Scheduler state in checkpoint is incompatible; skipping scheduler resume")
+        else:
+            self._pending_scheduler_state = scheduler_state if scheduler_state is not None else None
+        self._start_epoch = int(state.get("epoch", 0))
+        self._current_epoch = self._start_epoch
+        self._global_batches = int(state.get("global_batches", self._global_batches))
+        self._optimizer_steps = int(state.get("optimizer_steps", self._optimizer_steps))
+        self._eval_batches = int(state.get("eval_batches", self._eval_batches))
+        self._best_metric = state.get("best_metric")  # type: ignore[assignment]
+        self._early_stop_counter = int(state.get("early_stop_counter", self._early_stop_counter))
+        history = state.get("history")
+        if isinstance(history, dict):
+            self.history.update(history)
+        if self.config.best_checkpoint_name:
+            best_candidate = self.output_dir / self.config.best_checkpoint_name
+            if best_candidate.exists():
+                self.best_checkpoint_path = best_candidate
+        if self.config.last_checkpoint_name:
+            last_candidate = self.output_dir / self.config.last_checkpoint_name
+            if last_candidate.exists():
+                self.last_checkpoint_path = last_candidate
+
+    def _maybe_resume_from_checkpoint(self) -> None:
+        if self.config.resume_from is None:
+            return
+        resume_path = self._resolve_resume_checkpoint(self.config.resume_from)
+        state = torch.load(resume_path, map_location=self.device)
+        if not isinstance(state, dict):
+            raise ValueError(f"Checkpoint at {resume_path} is invalid or corrupted")
+        self._apply_checkpoint_state(state, load_scheduler=False)
+        _emit_info(
+            f"Resuming potential training from {resume_path} at epoch {int(self._start_epoch)}"
+        )
+
+    def _resolve_resume_checkpoint(self, resume_from: Path) -> Path:
+        path = Path(resume_from)
+        if path.is_file():
+            return path
+        if not path.exists():
+            raise FileNotFoundError(f"Resume path '{resume_from}' does not exist")
+        candidates = []
+        if self.config.last_checkpoint_name:
+            candidates.append(path / self.config.last_checkpoint_name)
+        if self.config.best_checkpoint_name:
+            candidates.append(path / self.config.best_checkpoint_name)
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        raise FileNotFoundError(
+            f"No checkpoint found in '{resume_from}'; checked {[c.name for c in candidates]}"
+        )
+
+    def _apply_checkpoint_state(self, state: Dict[str, object], *, load_scheduler: bool = True) -> None:
+        model_state = state.get("model_state")
+        if model_state is not None:
+            self.model.load_state_dict(model_state)  # type: ignore[arg-type]
+            if self.distributed.enabled:
+                self.distributed.sync_module_state(self.model)
+        optimizer_state = state.get("optimizer_state")
+        if optimizer_state is not None:
+            try:
+                self.optimizer.load_state_dict(optimizer_state)  # type: ignore[arg-type]
+            except ValueError:
+                _emit_info("Optimizer state in checkpoint is incompatible; skipping optimizer resume")
+        scaler_state = state.get("scaler_state")
+        if scaler_state is not None and self.scaler is not None:
+            try:
+                self.scaler.load_state_dict(scaler_state)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover - defensive
+                _emit_info("AMP scaler state in checkpoint is incompatible; skipping scaler resume")
+        scheduler_state = state.get("scheduler_state")
+        if load_scheduler and scheduler_state is not None and self.scheduler is not None:
+            try:
+                self.scheduler.load_state_dict(scheduler_state)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover - defensive
+                _emit_info("Scheduler state in checkpoint is incompatible; skipping scheduler resume")
+        else:
+            self._pending_scheduler_state = scheduler_state if scheduler_state is not None else None
+        self._start_epoch = int(state.get("epoch", 0))
+        self._current_epoch = self._start_epoch
+        self._global_batches = int(state.get("global_batches", self._global_batches))
+        self._optimizer_steps = int(state.get("optimizer_steps", self._optimizer_steps))
+        self._eval_batches = int(state.get("eval_batches", self._eval_batches))
+        self._best_metric = state.get("best_metric")  # type: ignore[assignment]
+        self._early_stop_counter = int(state.get("early_stop_counter", self._early_stop_counter))
+        history = state.get("history")
+        if isinstance(history, dict):
+            self.history.update(history)
+        if self.config.best_checkpoint_name:
+            best_candidate = self.output_dir / self.config.best_checkpoint_name
+            if best_candidate.exists():
+                self.best_checkpoint_path = best_candidate
+        if self.config.last_checkpoint_name:
+            last_candidate = self.output_dir / self.config.last_checkpoint_name
+            if last_candidate.exists():
+                self.last_checkpoint_path = last_candidate
+
+    def _maybe_resume_from_checkpoint(self) -> None:
+        if self.config.resume_from is None:
+            return
+        resume_path = self._resolve_resume_checkpoint(self.config.resume_from)
+        state = torch.load(resume_path, map_location=self.device)
+        if not isinstance(state, dict):
+            raise ValueError(f"Checkpoint at {resume_path} is invalid or corrupted")
+        self._apply_checkpoint_state(state, load_scheduler=False)
+        _emit_info(
+            f"Resuming training from {resume_path} at epoch {int(self._start_epoch)}"
+        )
 
     def _update_checkpoints(self, train_loss: float, val_loss: Optional[float]) -> None:
         monitor = val_loss if val_loss is not None else train_loss
@@ -1060,6 +1246,9 @@ class PotentialTrainer:
         self._global_batches = 0
         self._optimizer_steps = 0
         self._eval_batches = 0
+        self._current_epoch = 0
+        self._start_epoch = 0
+        self._pending_scheduler_state: Optional[Dict[str, object]] = None
         self._summary_writer: Optional[SummaryWriter]
         self._tensorboard_dir: Optional[Path] = None
         if self.config.tensorboard and self.distributed.is_main_process():
@@ -1117,6 +1306,7 @@ class PotentialTrainer:
                 amp_state,
             )
         )
+        self._maybe_resume_from_checkpoint()
 
     @property
     def data_loader_generator(self) -> Optional[torch.Generator]:
@@ -1175,6 +1365,12 @@ class PotentialTrainer:
         except TypeError:
             steps_per_epoch = None
         self.scheduler = _maybe_build_scheduler(self.optimizer, self.config, steps_per_epoch)
+        if self._pending_scheduler_state is not None and self.scheduler is not None:
+            try:
+                self.scheduler.load_state_dict(self._pending_scheduler_state)
+            except Exception:  # pragma: no cover - defensive
+                _emit_info("Scheduler state in checkpoint is incompatible; skipping scheduler resume")
+            self._pending_scheduler_state = None
         details.append(f"optimizer={self.config.optimizer}")
         if self.scheduler is not None:
             schedule_msg = f"scheduler={self.config.scheduler}"
@@ -1192,6 +1388,8 @@ class PotentialTrainer:
         )
         if effective_batch != self.config.batch_size:
             details.append(f"effective batch={effective_batch}")
+        if self._start_epoch > 0:
+            details.append(f"resuming from epoch {self._start_epoch}")
         if details:
             summary += " (" + ", ".join(details) + ")"
         _emit_info(summary)
@@ -1200,7 +1398,12 @@ class PotentialTrainer:
         last_train_metrics: Dict[str, float] = {}
         last_val_metrics: Optional[Dict[str, float]] = None
         log_interval = max(int(self.config.log_every), 1)
-        for epoch in range(1, self.config.epochs + 1):
+        start_epoch = int(self._start_epoch) + 1
+        if start_epoch > self.config.epochs:
+            _emit_info("All configured epochs have already been completed; skipping training loop")
+            return self.history
+        for epoch in range(start_epoch, self.config.epochs + 1):
+            self._current_epoch = epoch
             if train_sampler is not None and hasattr(train_sampler, "set_epoch"):
                 train_sampler.set_epoch(epoch)
             epoch_start = perf_counter()
@@ -1491,7 +1694,17 @@ class PotentialTrainer:
     def _checkpoint_state(self) -> Dict[str, object]:
         state: Dict[str, object] = {
             "model_state": self.model.state_dict(),
+            "optimizer_state": self.optimizer.state_dict(),
+            "scheduler_state": self.scheduler.state_dict() if self.scheduler is not None else None,
+            "scaler_state": self.scaler.state_dict() if self.scaler is not None else None,
             "config": self.config,
+            "epoch": self._current_epoch,
+            "global_batches": self._global_batches,
+            "optimizer_steps": self._optimizer_steps,
+            "eval_batches": self._eval_batches,
+            "best_metric": self._best_metric,
+            "early_stop_counter": self._early_stop_counter,
+            "history": dict(self.history),
         }
         if self.baseline is not None:
             state["baseline_state"] = self.baseline.state_dict()
