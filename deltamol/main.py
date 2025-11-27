@@ -75,7 +75,7 @@ def run_baseline_training(
         test_formula_vectors = torch.stack(
             [build_formula_vector(atoms, species=species) for atoms in test_data.atoms]
         )
-        test_energies_tensor = torch.tensor(test_data.energies, dtype=torch.float32)
+        test_energies_tensor = torch.as_tensor(test_data.energies, dtype=torch.float32).squeeze(-1)
         test_dataset_tensors = TensorDataset(test_formula_vectors, test_energies_tensor)
     if is_main_process():
         LOGGER.info(
@@ -86,7 +86,7 @@ def run_baseline_training(
     formula_vectors = torch.stack(
         [build_formula_vector(atoms, species=species) for atoms in dataset.atoms]
     )
-    energies = torch.tensor(dataset.energies, dtype=torch.float32)
+    energies = torch.as_tensor(dataset.energies, dtype=torch.float32).squeeze(-1)
     override_kwargs = {}
     if mixed_precision is not None:
         override_kwargs["mixed_precision"] = mixed_precision
