@@ -35,7 +35,7 @@ class BaselineConfig:
 class ModelConfig:
     """Lightweight description of the neural potential to construct."""
 
-    name: Literal["gcn", "transformer", "external", "hybrid"] = "transformer"
+    name: Literal["gcn", "transformer", "external", "hybrid", "se3"] = "transformer"
     hidden_dim: int = 128
     gcn_layers: int = 2
     transformer_layers: int = 2
@@ -53,6 +53,8 @@ class ModelConfig:
     adapter_weights: Optional[Path] = None
     neighbor_strategy: str = "adjacency"
     neighbor_cutoff: Optional[float] = None
+    se3_distance_embedding: int = 32
+    se3_layers: Optional[int] = None
 
 
 @dataclass
