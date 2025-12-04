@@ -23,8 +23,11 @@ surfaces by embracing three core ideas:
 2. Cache descriptors using ``python -m deltamol.main cache-descriptors``. The
    cache is stored as an HDF5 file.
 3. Train the baseline using ``python -m deltamol.main train-baseline``.
-4. Train the hybrid SOAP-guided potential using the cached descriptors and the
-   `train-potential` command.
+4. Train the hybrid SOAP-guided potential or the SE(3)-Transformer variant
+   using the cached descriptors and the `train-potential` command. The
+   architecture can be selected in the experiment YAML via `model.name` or
+   overridden on the CLI with `--model se3` or `--model hybrid` while keeping
+   the same residual learning flow as the baseline.
 
 ## Evaluation and testing
 
@@ -67,6 +70,8 @@ potential models.
 
 * Extend the hybrid SOAP-guided potential with additional pooling and
   regularisation experiments.
+* Benchmark the SE(3)-Transformer architecture for equivariant energy and force
+  modelling.
 * Add force supervision via analytic gradients and direct regression.
 * Integrate experiment tracking and configuration management improvements.
 * Provide example notebooks and benchmarking scripts.

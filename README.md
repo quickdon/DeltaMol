@@ -13,7 +13,9 @@ datasets, cache descriptors, train models, and evaluate results.
 * Support multiple descriptor families (ACSF, SOAP, SLATM, LMBTR, FCHL19) behind
   a common abstraction.
 * Combine a linear atomic baseline with a hybrid SOAP-guided graph/transformer
-  potential to model energy corrections.
+  potential to model energy corrections, and optionally test an
+  SE(3)-Transformer architecture for equivariant attention over molecular
+  geometries.
 * Offer ready-to-use tooling for dataset preparation, model training,
   checkpointing, and evaluation.
 
@@ -262,6 +264,18 @@ baseline is present, `residual_mode` controls whether training targets subtract
 the baseline prediction (the default) or optimise absolute energies instead;
 override the YAML with `--residual-mode` or `--absolute-mode` on the command
 line.
+
+Architectures can be swapped without editing the YAML by passing
+`--model transformer`, `--model hybrid`, or `--model se3` on the CLI; the flag
+respects the same residual training flow used by the baseline so SE(3)
+Transformer runs participate in delta-learning alongside the hybrid potential.
+Additional overrides for depth (`--transformer-layers`, `--gcn-layers`,
+`--se3-layers`), width (`--hidden-dim`, `--ffn-dim`, `--num-heads`), and SE(3)
+distance embeddings (`--se3-distance-embedding`) keep experiments flexible
+without needing to duplicate configuration files. When `predict_forces` is
+enabled in either the YAML or via `--predict-forces`, the trainer automatically
+switches to direct force supervision rather than deriving gradients from the
+predicted energies.
 
 Dataset sections inside the experiment configuration accept the same `format`
 and `key_map` fields exposed on the CLI. Each `key_map` entry follows the

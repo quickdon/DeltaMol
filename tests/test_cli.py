@@ -18,3 +18,39 @@ def test_cli_parses_descriptor_command():
     )
     assert callable(args.func)
     assert args.descriptor == "soap"
+
+
+def test_cli_parses_potential_model_overrides():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "train-potential",
+            "dataset.npz",
+            "--config",
+            "experiment.yaml",
+            "--model",
+            "se3",
+            "--hidden-dim",
+            "96",
+            "--transformer-layers",
+            "3",
+            "--se3-layers",
+            "2",
+            "--se3-distance-embedding",
+            "48",
+            "--num-heads",
+            "6",
+            "--ffn-dim",
+            "256",
+            "--dropout",
+            "0.2",
+            "--cutoff",
+            "4.5",
+            "--predict-forces",
+            "--residual-mode",
+        ]
+    )
+    assert callable(args.func)
+    assert args.model_name == "se3"
+    assert args.se3_layers == 2
+    assert args.predict_forces is True

@@ -29,6 +29,8 @@ from ..models import (
     HybridPotentialConfig,
     LinearAtomicBaseline,
     LinearBaselineConfig,
+    SE3TransformerConfig,
+    SE3TransformerPotential,
     load_external_model,
 )
 from ..evaluation.testing import evaluate_potential_model, plot_predictions_vs_targets
@@ -87,6 +89,19 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
             predict_forces=model_cfg.predict_forces,
         )
         return HybridPotential(config)
+    if name in {"se3", "se3-transformer", "equivariant"}:
+        config = SE3TransformerConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_layers=model_cfg.se3_layers or model_cfg.transformer_layers,
+            num_heads=model_cfg.num_heads,
+            ffn_dim=model_cfg.ffn_dim,
+            distance_embedding_dim=model_cfg.se3_distance_embedding,
+            dropout=model_cfg.dropout,
+            cutoff=model_cfg.cutoff,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return SE3TransformerPotential(config)
     if name == "gcn":
         config = HybridPotentialConfig(
             species=species_tuple,
@@ -277,6 +292,7 @@ def _train_potential(args: argparse.Namespace) -> None:
             dtype=experiment.dataset.dtype,
         )
     training_cfg = experiment.training
+    model_overrides = {}
     overrides = {}
     if args.output is not None:
         overrides["output_dir"] = args.output
@@ -316,14 +332,45 @@ def _train_potential(args: argparse.Namespace) -> None:
             overrides["parameter_init"] = args.parameter_init
     if args.resume_from is not None:
         overrides["resume_from"] = args.resume_from
+    if args.model_name is not None:
+        name = args.model_name
+        if name in {"hybrid-potential", "soap-transformer"}:
+            name = "hybrid"
+        model_overrides["name"] = name
+    if args.hidden_dim is not None:
+        model_overrides["hidden_dim"] = args.hidden_dim
+    if args.transformer_layers is not None:
+        model_overrides["transformer_layers"] = args.transformer_layers
+    if args.gcn_layers is not None:
+        model_overrides["gcn_layers"] = args.gcn_layers
+    if args.se3_layers is not None:
+        model_overrides["se3_layers"] = args.se3_layers
+    if args.se3_distance_embedding is not None:
+        model_overrides["se3_distance_embedding"] = args.se3_distance_embedding
+    if args.num_heads is not None:
+        model_overrides["num_heads"] = args.num_heads
+    if args.ffn_dim is not None:
+        model_overrides["ffn_dim"] = args.ffn_dim
+    if args.dropout is not None:
+        model_overrides["dropout"] = args.dropout
+    if args.cutoff is not None:
+        model_overrides["cutoff"] = args.cutoff
+    if args.use_coordinate_features is not None:
+        model_overrides["use_coordinate_features"] = args.use_coordinate_features
+    if args.predict_forces is not None:
+        model_overrides["predict_forces"] = args.predict_forces
     if args.residual_mode is not None:
         experiment = replace(experiment, model=replace(experiment.model, residual_mode=args.residual_mode))
+    if model_overrides:
+        experiment = replace(experiment, model=replace(experiment.model, **model_overrides))
     if overrides:
         if "output_dir" in overrides and not isinstance(overrides["output_dir"], Path):
             overrides["output_dir"] = Path(overrides["output_dir"])
         training_cfg = replace(training_cfg, **overrides)
     elif not isinstance(training_cfg.output_dir, Path):
         training_cfg = replace(training_cfg, output_dir=Path(training_cfg.output_dir))
+    if experiment.model.predict_forces and not training_cfg.predict_forces_directly:
+        training_cfg = replace(training_cfg, predict_forces_directly=True)
     if training_cfg.output_dir is None:
         raise ValueError("Potential training configuration must define an output directory")
     configure_logging(training_cfg.output_dir)
@@ -671,6 +718,81 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-grad-scaler",
         action="store_true",
         help="Disable gradient scaling during mixed precision runs",
+    )
+    potential_parser.add_argument(
+        "--model",
+        dest="model_name",
+        choices=["transformer", "hybrid", "hybrid-potential", "soap-transformer", "se3", "gcn"],
+        default=None,
+        help="Override the architecture defined in the config (options include transformer, hybrid, and se3)",
+    )
+    potential_parser.add_argument(
+        "--hidden-dim", type=int, default=None, help="Hidden dimension for the potential backbone"
+    )
+    potential_parser.add_argument(
+        "--transformer-layers",
+        type=int,
+        default=None,
+        help="Number of transformer layers for hybrid or SE(3) architectures",
+    )
+    potential_parser.add_argument(
+        "--gcn-layers", type=int, default=None, help="Number of GCN layers for the hybrid model"
+    )
+    potential_parser.add_argument(
+        "--se3-layers",
+        type=int,
+        default=None,
+        help="Number of SE(3) attention blocks (defaults to transformer_layers when omitted)",
+    )
+    potential_parser.add_argument(
+        "--se3-distance-embedding",
+        type=int,
+        default=None,
+        help="Distance embedding dimension for SE(3) attention biases",
+    )
+    potential_parser.add_argument("--num-heads", type=int, default=None, help="Number of attention heads")
+    potential_parser.add_argument(
+        "--ffn-dim",
+        type=int,
+        default=None,
+        help="Transformer feedforward hidden dimension for hybrid or SE(3) models",
+    )
+    potential_parser.add_argument(
+        "--dropout", type=float, default=None, help="Dropout probability applied throughout the model"
+    )
+    potential_parser.add_argument(
+        "--cutoff",
+        type=float,
+        default=None,
+        help="Neighbourhood cutoff (Å) for graph construction and distance embeddings",
+    )
+    coord_group = potential_parser.add_mutually_exclusive_group()
+    coord_group.add_argument(
+        "--use-coordinate-features",
+        dest="use_coordinate_features",
+        action="store_true",
+        default=None,
+        help="Include coordinate-derived features in the hybrid potential",
+    )
+    coord_group.add_argument(
+        "--no-coordinate-features",
+        dest="use_coordinate_features",
+        action="store_false",
+        help="Disable coordinate-derived features in the hybrid potential",
+    )
+    predict_group = potential_parser.add_mutually_exclusive_group()
+    predict_group.add_argument(
+        "--predict-forces",
+        dest="predict_forces",
+        action="store_true",
+        default=None,
+        help="Enable direct force prediction heads when supported by the architecture",
+    )
+    predict_group.add_argument(
+        "--no-predict-forces",
+        dest="predict_forces",
+        action="store_false",
+        help="Disable direct force prediction even if the config enables it",
     )
     residual_group = potential_parser.add_mutually_exclusive_group()
     residual_group.add_argument(
