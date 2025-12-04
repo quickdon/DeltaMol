@@ -171,6 +171,13 @@ class SE3TransformerPotential(nn.Module):
         adjacency = adjacency * mask_bool.unsqueeze(1) * mask_bool.unsqueeze(2)
         edge_mask = adjacency > 0
 
+        # Ensure every active node has at least one edge to avoid NaNs from softmax.
+        has_neighbors = edge_mask.any(dim=-1)
+        isolated_nodes = mask_bool & ~has_neighbors
+        if isolated_nodes.any():
+            adjacency = adjacency + torch.diag_embed(isolated_nodes.to(adjacency.dtype))
+            edge_mask = adjacency > 0
+
         centers = _make_distance_expansion(self.config.cutoff, self.config.distance_embedding_dim, positions.device)
         distance_features = _expand_distances(distances, centers)
         distance_features = distance_features * adjacency.unsqueeze(-1)
