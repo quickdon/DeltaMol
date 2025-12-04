@@ -26,6 +26,7 @@ class HybridPotentialConfig:
     cutoff: float = 5.0
     use_coordinate_features: bool = True
     soap_num_radial: int = 8
+    soap_max_angular: int = 4
     soap_cutoff: float = 5.0
     soap_gaussian_width: float = 0.5
     predict_forces: bool = False
@@ -105,12 +106,13 @@ class HybridPotential(nn.Module):
         if config.use_coordinate_features:
             soap_config = AtomicSOAPConfig(
                 num_radial=config.soap_num_radial,
+                max_angular=config.soap_max_angular,
                 cutoff=config.soap_cutoff,
                 gaussian_width=config.soap_gaussian_width,
             )
             self.descriptor = AtomicSOAPDescriptor(soap_config)
             self.descriptor_projection = nn.Sequential(
-                nn.Linear(config.soap_num_radial, config.hidden_dim),
+                nn.Linear(self.descriptor.num_features, config.hidden_dim),
                 nn.ReLU(),
                 nn.Linear(config.hidden_dim, config.hidden_dim),
             )
