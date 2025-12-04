@@ -220,6 +220,7 @@ model:
   predict_forces: true
   cutoff: 6.0
   soap_num_radial: 8
+  soap_max_angular: 4
   soap_cutoff: 6.0
   soap_gaussian_width: 0.5
   residual_mode: true
