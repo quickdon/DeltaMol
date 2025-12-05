@@ -70,6 +70,12 @@ def evaluate_potential_model(
             model_device = next(model.parameters()).device
         except StopIteration:
             model_device = torch.device("cpu")
+    try:
+        target_dtype = next(model.parameters()).dtype
+    except StopIteration:
+        target_dtype = torch.float32
+    if baseline is not None:
+        baseline = baseline.to(device=model_device, dtype=target_dtype)
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -85,10 +91,15 @@ def evaluate_potential_model(
     force_predictions = []
     force_targets = []
     for batch in loader:
-        batch = {
-            key: value.to(model_device) if isinstance(value, torch.Tensor) else value
-            for key, value in batch.items()
-        }
+        cast_batch = {}
+        for key, value in batch.items():
+            if not isinstance(value, torch.Tensor):
+                continue
+            moved = value.to(model_device)
+            if moved.is_floating_point():
+                moved = moved.to(target_dtype)
+            cast_batch[key] = moved
+        batch = cast_batch
         forces_available = batch.get("forces") is not None
         positions = batch["positions"]
         if forces_available:
