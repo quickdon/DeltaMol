@@ -110,6 +110,20 @@ def register_distributed_state(state: DistributedState) -> DistributedState:
     return state
 
 
+def destroy_process_group(state: Optional[DistributedState] = None) -> None:
+    """Destroy the active distributed process group, if one exists."""
+
+    global _GLOBAL_STATE
+    if state is None:
+        state = _GLOBAL_STATE
+    if state is None or not state.enabled:
+        _GLOBAL_STATE = None
+        return
+    if _dist_available():
+        dist.destroy_process_group()
+    _GLOBAL_STATE = None
+
+
 def is_main_process() -> bool:
     state = get_distributed_state()
     if state is None:
@@ -309,5 +323,6 @@ __all__ = [
     "DistributedSampler",
     "get_distributed_state",
     "init_distributed",
+    "destroy_process_group",
     "is_main_process",
 ]

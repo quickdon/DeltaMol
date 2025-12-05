@@ -30,7 +30,13 @@ from ..evaluation.testing import (
 from ..models.baseline import LinearAtomicBaseline, LinearBaselineConfig
 from ..models.potential import PotentialOutput
 from .datasets import MolecularGraphDataset, collate_graphs
-from ..utils.distributed import DistributedConfig, DistributedState, init_distributed, is_main_process
+from ..utils.distributed import (
+    DistributedConfig,
+    DistributedState,
+    destroy_process_group,
+    init_distributed,
+    is_main_process,
+)
 from ..utils.random import seed_everything, seed_worker
 
 LOGGER = logging.getLogger(__name__)
@@ -1118,9 +1124,22 @@ def train_baseline(
             _emit_info("TensorBoard logging disabled for least squares solver")
             config.tensorboard = False
     trainer = Trainer(model, config)
-    if solver in {"least_squares", "ols", "linear_regression"}:
-        if trainer.distributed.enabled and trainer.distributed.world_size > 1:
-            if trainer.distributed.is_main_process():
+    try:
+        if solver in {"least_squares", "ols", "linear_regression"}:
+            if trainer.distributed.enabled and trainer.distributed.world_size > 1:
+                if trainer.distributed.is_main_process():
+                    history = _solve_least_squares(
+                        model,
+                        dataset,
+                        train_indices=train_indices,
+                        val_indices=val_indices,
+                        output_dir=config.output_dir,
+                    )
+                else:
+                    history = {}
+                trainer.distributed.sync_module_state(trainer.model)
+                history = trainer.distributed.broadcast_object(history)
+            else:
                 history = _solve_least_squares(
                     model,
                     dataset,
@@ -1128,68 +1147,58 @@ def train_baseline(
                     val_indices=val_indices,
                     output_dir=config.output_dir,
                 )
-            else:
-                history = {}
-            trainer.distributed.sync_module_state(trainer.model)
-            history = trainer.distributed.broadcast_object(history)
-        else:
-            history = _solve_least_squares(
-                model,
-                dataset,
-                train_indices=train_indices,
-                val_indices=val_indices,
-                output_dir=config.output_dir,
-            )
-        trainer.history = history
-        train_loss_value = float(history.get("train/1", 0.0))
-        val_loss_value = history.get("val/1")
-        trainer._update_checkpoints(train_loss_value, val_loss_value)
-        return trainer
-    train_sampler = trainer.distributed.build_sampler(train_dataset, shuffle=True)
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.batch_size,
-        shuffle=train_sampler is None,
-        sampler=train_sampler,
-        num_workers=config.num_workers,
-        worker_init_fn=trainer.worker_init_fn,
-        generator=trainer.data_loader_generator,
-    )
-    if val_dataset is not None:
-        val_sampler = trainer.distributed.build_sampler(val_dataset, shuffle=False)
-        val_loader = DataLoader(
-            val_dataset,
+            trainer.history = history
+            train_loss_value = float(history.get("train/1", 0.0))
+            val_loss_value = history.get("val/1")
+            trainer._update_checkpoints(train_loss_value, val_loss_value)
+            return trainer
+        train_sampler = trainer.distributed.build_sampler(train_dataset, shuffle=True)
+        train_loader = DataLoader(
+            train_dataset,
             batch_size=config.batch_size,
-            shuffle=False,
-            sampler=val_sampler,
+            shuffle=train_sampler is None,
+            sampler=train_sampler,
             num_workers=config.num_workers,
             worker_init_fn=trainer.worker_init_fn,
             generator=trainer.data_loader_generator,
         )
-    else:
-        val_loader = None
-    trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
-    if test_dataset is not None and len(test_dataset) > 0:
-        test_metrics, predictions, targets = evaluate_baseline_model(
-            trainer.model,
-            test_dataset,
-            batch_size=config.batch_size,
-            device=trainer.device,
-            num_workers=config.num_workers,
-        )
-        trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
-        plot_path = config.output_dir / "baseline_test_predictions.png"
-        try:
-            plot_predictions_vs_targets(
-                predictions,
-                targets,
-                plot_path,
-                title="Baseline predictions vs targets (test)",
+        if val_dataset is not None:
+            val_sampler = trainer.distributed.build_sampler(val_dataset, shuffle=False)
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=config.batch_size,
+                shuffle=False,
+                sampler=val_sampler,
+                num_workers=config.num_workers,
+                worker_init_fn=trainer.worker_init_fn,
+                generator=trainer.data_loader_generator,
             )
-            _emit_info(f"Saved baseline test scatter plot to {plot_path}")
-        except Exception:  # pragma: no cover - plotting is best-effort
-            _emit_info("Failed to create baseline prediction plot; continuing without it")
-    return trainer
+        else:
+            val_loader = None
+        trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
+        if test_dataset is not None and len(test_dataset) > 0:
+            test_metrics, predictions, targets = evaluate_baseline_model(
+                trainer.model,
+                test_dataset,
+                batch_size=config.batch_size,
+                device=trainer.device,
+                num_workers=config.num_workers,
+            )
+            trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+            plot_path = config.output_dir / "baseline_test_predictions.png"
+            try:
+                plot_predictions_vs_targets(
+                    predictions,
+                    targets,
+                    plot_path,
+                    title="Baseline predictions vs targets (test)",
+                )
+                _emit_info(f"Saved baseline test scatter plot to {plot_path}")
+            except Exception:  # pragma: no cover - plotting is best-effort
+                _emit_info("Failed to create baseline prediction plot; continuing without it")
+        return trainer
+    finally:
+        destroy_process_group(trainer.distributed)
 
 
 @dataclass
@@ -1944,52 +1953,55 @@ def train_potential_model(
         baseline_requires_grad=baseline_requires_grad,
         residual_mode=residual_mode,
     )
-    train_sampler = trainer.distributed.build_sampler(train_dataset, shuffle=True)
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.batch_size,
-        shuffle=train_sampler is None,
-        sampler=train_sampler,
-        collate_fn=collate_graphs,
-        num_workers=config.num_workers,
-        worker_init_fn=trainer.worker_init_fn,
-        generator=trainer.data_loader_generator,
-    )
-    if val_dataset is not None:
-        val_sampler = trainer.distributed.build_sampler(val_dataset, shuffle=False)
-        val_loader = DataLoader(
-            val_dataset,
+    try:
+        train_sampler = trainer.distributed.build_sampler(train_dataset, shuffle=True)
+        train_loader = DataLoader(
+            train_dataset,
             batch_size=config.batch_size,
-            shuffle=False,
-            sampler=val_sampler,
+            shuffle=train_sampler is None,
+            sampler=train_sampler,
             collate_fn=collate_graphs,
             num_workers=config.num_workers,
             worker_init_fn=trainer.worker_init_fn,
             generator=trainer.data_loader_generator,
         )
-    else:
-        val_loader = None
-    trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
-    if test_dataset is not None and len(test_dataset) > 0:
-        test_metrics, predictions, targets = evaluate_potential_model(
-            trainer.model,
-            test_dataset,
-            baseline=baseline,
-            residual_mode=residual_mode,
-            batch_size=config.batch_size,
-            num_workers=config.num_workers,
-            device=trainer.device,
-        )
-        trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
-        plot_path = config.output_dir / "potential_test_predictions.png"
-        try:
-            plot_predictions_vs_targets(
-                predictions,
-                targets,
-                plot_path,
-                title="Potential predictions vs targets (test)",
+        if val_dataset is not None:
+            val_sampler = trainer.distributed.build_sampler(val_dataset, shuffle=False)
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=config.batch_size,
+                shuffle=False,
+                sampler=val_sampler,
+                collate_fn=collate_graphs,
+                num_workers=config.num_workers,
+                worker_init_fn=trainer.worker_init_fn,
+                generator=trainer.data_loader_generator,
             )
-            _emit_info(f"Saved potential test scatter plot to {plot_path}")
-        except Exception:  # pragma: no cover - plotting is best-effort
-            _emit_info("Failed to create potential prediction plot; continuing without it")
-    return trainer
+        else:
+            val_loader = None
+        trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
+        if test_dataset is not None and len(test_dataset) > 0:
+            test_metrics, predictions, targets = evaluate_potential_model(
+                trainer.model,
+                test_dataset,
+                baseline=baseline,
+                residual_mode=residual_mode,
+                batch_size=config.batch_size,
+                num_workers=config.num_workers,
+                device=trainer.device,
+            )
+            trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+            plot_path = config.output_dir / "potential_test_predictions.png"
+            try:
+                plot_predictions_vs_targets(
+                    predictions,
+                    targets,
+                    plot_path,
+                    title="Potential predictions vs targets (test)",
+                )
+                _emit_info(f"Saved potential test scatter plot to {plot_path}")
+            except Exception:  # pragma: no cover - plotting is best-effort
+                _emit_info("Failed to create potential prediction plot; continuing without it")
+        return trainer
+    finally:
+        destroy_process_group(trainer.distributed)
