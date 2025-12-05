@@ -305,6 +305,30 @@ checkpoint is evaluated on the test data, logging MSE, RMSE, and MAE values and
 saving a `baseline_test_predictions.png` or `potential_test_predictions.png`
 scatter plot that compares predictions against the true energies.
 
+Trained models can also be reused for stand-alone evaluation or application.
+Use `deltamol predict-baseline DATASET CHECKPOINT` to load a baseline
+checkpoint, compute metrics on the provided dataset, and write predictions plus
+`baseline_predictions_<dataset>.png` and `baseline_metrics_<dataset>.json`
+artifacts alongside the checkpoint (or in a custom `--output` directory). For
+potential models, `deltamol predict-potential DATASET CHECKPOINT --experiment
+experiment.yaml` rebuilds the architecture from the saved experiment
+description, evaluates the checkpoint on the supplied dataset, and saves an
+equivalent set of metrics, serialized predictions, and scatter plots for rapid
+model assessment.
+
+Example invocations:
+
+```bash
+# Evaluate a trained baseline on a fresh dataset
+deltamol predict-baseline data/aspirin_test.npz runs/baseline/baseline_best.pt \
+  --output runs/baseline/application
+
+# Apply a potential checkpoint using the stored experiment description
+deltamol predict-potential data/aspirin_test.npz runs/potential/potential_best.pt \
+  --experiment runs/potential/experiment.yaml \
+  --output runs/potential/application
+```
+
 Distributed training is fully supported: launch the CLI with `torchrun` to
 perform single-node multi-GPU optimisation, or combine `--nproc_per_node` with
 `--nnodes` to scale across machines. The trainer automatically detects the
