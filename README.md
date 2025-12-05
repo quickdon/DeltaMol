@@ -339,10 +339,7 @@ automatically freezes logging and checkpoint writes on non-main ranks.
 
 #### Torchrun quick start
 
-When using DDP, prefer `torchrun` with the `-m` flag so the module is imported
-directly, rather than adding an extra `python` argument (which Torch treats as a
-script path and raises "can't open file .../python"). A minimal two-GPU launch
-looks like:
+A minimal two-GPU launch looks like:
 
 ```bash
 torchrun --nproc_per_node=2 -m deltamol.main train-potential --config configs/potential-ddp.yaml
