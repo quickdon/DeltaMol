@@ -730,10 +730,15 @@ class Trainer:
             if training:
                 train_step_index = self._global_batches + 1
                 self._log_scalar("loss/train_step", loss_value, train_step_index)
+                total_batch_size = (
+                    batch_size
+                    * max(self.distributed.world_size, 1)
+                    * max(self._update_frequency, 1)
+                )
                 message += (
                     f", accum={accum_step}/{self._update_frequency}, "
                     f"optimizer_steps={self._optimizer_steps}, "
-                    f"global_batch={train_step_index}"
+                    f"total_batch_size={total_batch_size}"
                 )
                 message += ", optimizer_step=yes" if optimizer_step else ", optimizer_step=no"
             else:
@@ -1666,10 +1671,15 @@ class PotentialTrainer:
                 self._log_scalar("loss/train_energy_step", energy_loss_value, train_step_index)
                 if self.config.force_weight > 0.0:
                     self._log_scalar("loss/train_force_step", force_loss_value, train_step_index)
+                total_batch_size = (
+                    batch_size
+                    * max(self.distributed.world_size, 1)
+                    * max(self._update_frequency, 1)
+                )
                 message += (
                     f", accum={accum_step}/{self._update_frequency}, "
                     f"optimizer_steps={self._optimizer_steps}, "
-                    f"global_batch={train_step_index}"
+                    f"total_batch_size={total_batch_size}"
                 )
                 message += ", optimizer_step=yes" if optimizer_step else ", optimizer_step=no"
             else:
