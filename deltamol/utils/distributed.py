@@ -139,7 +139,11 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
     if resolved_local_rank is None:
         resolved_local_rank = resolved_rank
     world_size = _resolve_world_size(config.world_size, world_size_env, explicit_devices)
-    resolved_device_index = _select_device_index(explicit_devices, resolved_local_rank)
+    resolved_device_index = None
+    if explicit_devices is not None:
+        resolved_device_index = _select_device_index(explicit_devices, resolved_local_rank)
+    elif requested and resolved_local_rank is not None:
+        resolved_device_index = resolved_local_rank
     if not requested:
         resolved_device = _resolve_device(device, local_rank=resolved_device_index)
         if config.enabled:
