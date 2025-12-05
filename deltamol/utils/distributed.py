@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -14,6 +15,8 @@ except ImportError:  # pragma: no cover - torch without distributed
     dist = None  # type: ignore[assignment]
 
 from torch.utils.data.distributed import DistributedSampler
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -127,6 +130,12 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
         _GLOBAL_STATE = None
     if not requested:
         resolved_device = _resolve_device(device, local_rank=config.local_rank)
+        if config.enabled:
+            LOGGER.info(
+                "Distributed training requested but auto-discovery resolved world size=1; "
+                "running single-process on %s",
+                resolved_device,
+            )
         return register_distributed_state(
             DistributedState(
                 config=config,
@@ -143,8 +152,18 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
         raise RuntimeError("Distributed training requested but torch.distributed is not available")
 
     world_size = config.world_size or int(os.environ.get("WORLD_SIZE", "1"))
+    rank = config.rank if config.rank is not None else int(os.environ.get("RANK", "0"))
+    local_rank = config.local_rank if config.local_rank is not None else int(
+        os.environ.get("LOCAL_RANK", rank)
+    )
     if world_size <= 1:
-        resolved_device = _resolve_device(device, local_rank=config.local_rank)
+        resolved_device = _resolve_device(device, local_rank=local_rank)
+        if rank == config.main_process:
+            LOGGER.info(
+                "Distributed training requested but world size resolved to 1; "
+                "running single-process on %s",
+                resolved_device,
+            )
         return register_distributed_state(
             DistributedState(
                 config=config,
@@ -157,8 +176,6 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
             )
         )
 
-    rank = config.rank if config.rank is not None else int(os.environ.get("RANK", "0"))
-    local_rank = config.local_rank if config.local_rank is not None else int(os.environ.get("LOCAL_RANK", rank))
     backend = config.backend
     if backend is None:
         backend = "nccl" if torch.cuda.is_available() and device.type == "cuda" else "gloo"
@@ -188,6 +205,16 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
         device=resolved_device,
     )
     register_distributed_state(state)
+    if rank == config.main_process:
+        LOGGER.info(
+            "Initialised distributed process group | backend=%s, world_size=%d, rank=%d, "
+            "local_rank=%d, device=%s",
+            backend,
+            world_size,
+            rank,
+            local_rank,
+            resolved_device,
+        )
     return state
 
 
