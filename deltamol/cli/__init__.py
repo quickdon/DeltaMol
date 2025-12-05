@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence, Tuple
 
 import torch
+from torch.utils.data import TensorDataset
 
 from ..config.manager import load_config, save_config
 from ..data.io import (
@@ -32,9 +33,14 @@ from ..models import (
     LinearBaselineConfig,
     SE3TransformerConfig,
     SE3TransformerPotential,
+    build_formula_vector,
     load_external_model,
 )
-from ..evaluation.testing import evaluate_potential_model, plot_predictions_vs_targets
+from ..evaluation.testing import (
+    evaluate_baseline_model,
+    evaluate_potential_model,
+    plot_predictions_vs_targets,
+)
 from ..training.configs import BaselineConfig, ModelConfig, PotentialExperimentConfig
 from ..training.datasets import MolecularGraphDataset
 from ..training.pipeline import TrainingConfig, train_potential_model
