@@ -197,6 +197,16 @@ def test_train_baseline_least_squares(tmp_path):
     assert trainer.last_checkpoint_path.exists()
 
 
+def test_train_baseline_matches_input_dtype(tmp_path):
+    formula_vectors = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float64)
+    energies = torch.tensor([0.5, -0.5], dtype=torch.float64)
+    config = TrainingConfig(output_dir=tmp_path, epochs=1, batch_size=2, tensorboard=False)
+
+    trainer = train_baseline(formula_vectors, energies, species=[1, 6], config=config)
+
+    assert trainer.model.linear.weight.dtype == formula_vectors.dtype
+
+
 def test_train_baseline_records_test_metrics(tmp_path):
     torch.manual_seed(0)
     formula_vectors = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=torch.float32)

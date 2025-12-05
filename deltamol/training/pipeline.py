@@ -1097,7 +1097,7 @@ def train_baseline(
         train_indices = list(range(len(dataset)))
         val_indices = []
     baseline_config = LinearBaselineConfig(species=tuple(species))
-    model = LinearAtomicBaseline(baseline_config)
+    model = LinearAtomicBaseline(baseline_config).to(formula_vectors.dtype)
     solver = getattr(config, "solver", "optimizer").lower()
     if solver in {"least_squares", "ols", "linear_regression"}:
         if config.device.lower() != "cpu":
