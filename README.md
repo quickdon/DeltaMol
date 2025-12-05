@@ -305,10 +305,9 @@ checkpoint is evaluated on the test data, logging MSE, RMSE, and MAE values and
 saving a `baseline_test_predictions.png` or `potential_test_predictions.png`
 scatter plot that compares predictions against the true energies.
 
-Distributed training is fully supported: launch the CLI with `torchrun` (for
-example `torchrun --nproc_per_node=4 python -m deltamol.main train-potential ...`)
-to perform single-node multi-GPU optimisation, or combine `--nproc_per_node`
-with `--nnodes` to scale across machines. The trainer automatically detects the
+Distributed training is fully supported: launch the CLI with `torchrun` to
+perform single-node multi-GPU optimisation, or combine `--nproc_per_node` with
+`--nnodes` to scale across machines. The trainer automatically detects the
 world size, keeps logging confined to the designated main process, and averages
 metrics across ranks. Advanced settings such as backend selection, explicit
 `WORLD_SIZE`, or a fixed main-process rank can be expressed inside the training
@@ -337,6 +336,20 @@ With this configuration each optimiser step sees the equivalent of
 ``16 × 4 × 4 = 256`` samples on a four-GPU node. The same `update_frequency`
 and `num_workers` controls are available on the baseline CLI, and the trainer
 automatically freezes logging and checkpoint writes on non-main ranks.
+
+#### Torchrun quick start
+
+When using DDP, prefer `torchrun` with the `-m` flag so the module is imported
+directly, rather than adding an extra `python` argument (which Torch treats as a
+script path and raises "can't open file .../python"). A minimal two-GPU launch
+looks like:
+
+```bash
+torchrun --nproc_per_node=2 -m deltamol.main train-potential --config configs/potential-ddp.yaml
+```
+
+Override `--config` as needed for other experiments, and append additional
+`torchrun` arguments such as `--nnodes` when scaling across hosts.
 
 ### Descriptor caching
 
