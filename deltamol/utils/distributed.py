@@ -5,7 +5,7 @@ import datetime as _dt
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence, Union
 
 import torch
 
@@ -26,7 +26,7 @@ class DistributedConfig:
     enabled: bool = False
     backend: Optional[str] = None
     init_method: Optional[str] = None
-    world_size: Optional[int] = None
+    world_size: Optional[Union[int, str]] = None
     rank: Optional[int] = None
     local_rank: Optional[int] = None
     main_process: int = 0
@@ -36,6 +36,7 @@ class DistributedConfig:
     find_unused_parameters: bool = False
     broadcast_buffers: bool = True
     auto_discover: bool = True
+    devices: Optional[Union[Sequence[int], str]] = None
 
 
 @dataclass
@@ -122,14 +123,29 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
     requested = config.enabled
     if not requested and config.auto_discover:
         requested = int(os.environ.get("WORLD_SIZE", "1")) > 1
+    explicit_devices = _normalise_devices(config.devices)
+    world_size_env = int(os.environ.get("WORLD_SIZE", "1"))
     global _GLOBAL_STATE
     if _GLOBAL_STATE is not None:
         if _GLOBAL_STATE.enabled or not requested:
             return _GLOBAL_STATE
         # Promote previously disabled state to an active distributed group if requested now.
         _GLOBAL_STATE = None
+    resolved_local_rank = config.local_rank
+    if resolved_local_rank is None:
+        local_rank_env = os.environ.get("LOCAL_RANK")
+        resolved_local_rank = int(local_rank_env) if local_rank_env is not None else None
+    resolved_rank = config.rank if config.rank is not None else int(os.environ.get("RANK", "0"))
+    if resolved_local_rank is None:
+        resolved_local_rank = resolved_rank
+    world_size = _resolve_world_size(config.world_size, world_size_env, explicit_devices)
+    resolved_device_index = None
+    if explicit_devices is not None:
+        resolved_device_index = _select_device_index(explicit_devices, resolved_local_rank)
+    elif requested and resolved_local_rank is not None:
+        resolved_device_index = resolved_local_rank
     if not requested:
-        resolved_device = _resolve_device(device, local_rank=config.local_rank)
+        resolved_device = _resolve_device(device, local_rank=resolved_device_index)
         if config.enabled:
             LOGGER.info(
                 "Distributed training requested but auto-discovery resolved world size=1; "
@@ -151,13 +167,17 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
     if dist is None or not dist.is_available():
         raise RuntimeError("Distributed training requested but torch.distributed is not available")
 
-    world_size = config.world_size or int(os.environ.get("WORLD_SIZE", "1"))
-    rank = config.rank if config.rank is not None else int(os.environ.get("RANK", "0"))
-    local_rank = config.local_rank if config.local_rank is not None else int(
-        os.environ.get("LOCAL_RANK", rank)
-    )
+    rank = resolved_rank
+    local_rank = resolved_local_rank
+    if explicit_devices is not None and world_size > len(explicit_devices):
+        LOGGER.warning(
+            "World size %d is larger than the number of configured devices (%d); "
+            "devices will be cycled across ranks",
+            world_size,
+            len(explicit_devices),
+        )
     if world_size <= 1:
-        resolved_device = _resolve_device(device, local_rank=local_rank)
+        resolved_device = _resolve_device(device, local_rank=resolved_device_index)
         if rank == config.main_process:
             LOGGER.info(
                 "Distributed training requested but world size resolved to 1; "
@@ -179,10 +199,7 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
     backend = config.backend
     if backend is None:
         backend = "nccl" if torch.cuda.is_available() and device.type == "cuda" else "gloo"
-    if config.master_addr is not None:
-        os.environ.setdefault("MASTER_ADDR", config.master_addr)
-    if config.master_port is not None:
-        os.environ.setdefault("MASTER_PORT", str(config.master_port))
+    _ensure_default_rendezvous(config)
     init_kwargs = {
         "backend": backend,
         "world_size": world_size,
@@ -194,14 +211,15 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
     init_kwargs["timeout"] = _dt.timedelta(seconds=timeout_seconds)
     if not dist.is_initialized():
         dist.init_process_group(**init_kwargs)
-    resolved_device = _resolve_device(device, local_rank=local_rank)
+    resolved_device_index = _select_device_index(explicit_devices, local_rank)
+    resolved_device = _resolve_device(device, local_rank=resolved_device_index)
     state = DistributedState(
         config=config,
         enabled=True,
         backend=backend,
         world_size=world_size,
         rank=rank,
-        local_rank=local_rank,
+        local_rank=resolved_device_index if resolved_device_index is not None else local_rank,
         device=resolved_device,
     )
     register_distributed_state(state)
@@ -212,7 +230,7 @@ def init_distributed(config: DistributedConfig, device: torch.device) -> Distrib
             backend,
             world_size,
             rank,
-            local_rank,
+            state.local_rank,
             resolved_device,
         )
     return state
@@ -228,6 +246,61 @@ def _resolve_device(device: torch.device, *, local_rank: Optional[int]) -> torch
             index = torch.cuda.current_device()
             return torch.device("cuda", index)
     return device
+
+
+def _normalise_devices(devices: Optional[Union[Sequence[int], str]]) -> Optional[Sequence[int]]:
+    if devices is None:
+        return None
+    if isinstance(devices, str):
+        tokenised = [item.strip() for item in devices.split(",") if item.strip()]
+        if len(tokenised) == 1 and tokenised[0].lower() == "all":
+            if not torch.cuda.is_available():
+                LOGGER.warning("Device selection 'all' requested but CUDA is not available")
+                return None
+            return list(range(torch.cuda.device_count()))
+        return [int(item) for item in tokenised]
+    return list(devices)
+
+
+def _resolve_world_size(
+    world_size: Optional[Union[int, str]], env_world_size: int, devices: Optional[Sequence[int]]
+) -> int:
+    if env_world_size > 1:
+        return env_world_size
+    if isinstance(world_size, str) and world_size.lower() == "all":
+        if devices is not None:
+            return max(len(devices), 1)
+        if torch.cuda.is_available():
+            return max(torch.cuda.device_count(), 1)
+        return 1
+    if isinstance(world_size, int):
+        return max(world_size, 1)
+    if devices is not None:
+        return max(len(devices), 1)
+    return max(env_world_size, 1)
+
+
+def _select_device_index(devices: Optional[Sequence[int]], local_rank: Optional[int]) -> Optional[int]:
+    if devices is None:
+        return local_rank
+    if local_rank is None:
+        return devices[0] if devices else None
+    if not devices:
+        return local_rank
+    return devices[local_rank % len(devices)]
+
+
+def _ensure_default_rendezvous(config: DistributedConfig) -> None:
+    if config.init_method is not None:
+        return
+    if config.master_addr is not None:
+        os.environ.setdefault("MASTER_ADDR", config.master_addr)
+    else:
+        os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    if config.master_port is not None:
+        os.environ.setdefault("MASTER_PORT", str(config.master_port))
+    else:
+        os.environ.setdefault("MASTER_PORT", "29500")
 
 
 __all__ = [

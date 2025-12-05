@@ -312,7 +312,11 @@ with `--nnodes` to scale across machines. The trainer automatically detects the
 world size, keeps logging confined to the designated main process, and averages
 metrics across ranks. Advanced settings such as backend selection, explicit
 `WORLD_SIZE`, or a fixed main-process rank can be expressed inside the training
-configuration via the nested `distributed` block:
+configuration via the nested `distributed` block. Rendezvous defaults are set
+automatically (`MASTER_ADDR=127.0.0.1`, `MASTER_PORT=29500`) when you do not
+provide an `init_method`, so single-node jobs no longer need extra environment
+variables. GPU selection now accepts either an explicit list or an `all`
+shorthand to match the number of visible CUDA devices:
 
 ```yaml
 training:
@@ -324,6 +328,9 @@ training:
     enabled: true
     backend: nccl
     main_process: 0
+    # Use all detected GPUs on the host; alternatively, list explicit device IDs
+    world_size: all
+    devices: [0, 2, 3]
 ```
 
 With this configuration each optimiser step sees the equivalent of

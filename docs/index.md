@@ -66,6 +66,18 @@ runs. Choose from standard initialisation schemes (Xavier, Kaiming, orthogonal,
 zeros) with the ``parameter_init`` option when constructing either baseline or
 potential models.
 
+## Distributed training options
+
+Distributed settings are configured via the ``training.distributed`` block in
+experiment YAML files. Setting ``enabled: true`` now works out-of-the-box on a
+single node without pre-populating rendezvous environment variables – sensible
+defaults for ``MASTER_ADDR`` and ``MASTER_PORT`` are injected automatically.
+When targeting multiple GPUs, either specify explicit device IDs via
+``devices`` (e.g. ``devices: [0, 2, 3]`` or ``devices: "0,2,3"``) or request
+``world_size: all`` to match the number of visible CUDA devices. The resolved
+device order is broadcast to ``local_rank`` so each process selects the
+intended GPU even when using a non-contiguous list.
+
 ## Roadmap
 
 * Extend the hybrid SOAP-guided potential with additional pooling and
