@@ -345,6 +345,17 @@ A minimal two-GPU launch looks like:
 torchrun --nproc_per_node=2 -m deltamol.main train-potential --config configs/potential-ddp.yaml
 ```
 
+When `torchrun` spawns multiple processes it sets `OMP_NUM_THREADS=1` for each
+rank to avoid oversubscribing CPU cores with OpenMP threads. Set this
+environment variable explicitly if you want heavier CPU-side work (for example,
+larger dataloader transforms or CPU-bound descriptor steps) to use more
+threads:
+
+```bash
+OMP_NUM_THREADS=4 torchrun --nproc_per_node=2 -m deltamol.main train-potential \
+    --config configs/potential-ddp.yaml
+```
+
 Override `--config` as needed for other experiments, and append additional
 `torchrun` arguments such as `--nnodes` when scaling across hosts.
 
