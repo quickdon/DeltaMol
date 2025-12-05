@@ -1221,6 +1221,10 @@ class PotentialTrainer:
         base_device = self._resolve_device(config.device)
         self.distributed: DistributedState = init_distributed(config.distributed, base_device)
         self.device = self.distributed.device
+        try:
+            self._model_dtype = next(self.model.parameters()).dtype
+        except StopIteration:
+            self._model_dtype = torch.float32
         self._seed_generator: Optional[torch.Generator]
         self._worker_init_fn: Optional[Callable[[int], None]]
         if config.seed is not None:
@@ -1253,7 +1257,7 @@ class PotentialTrainer:
         self._best_metric: Optional[float] = None
         self._early_stop_counter = 0
         if self.baseline is not None:
-            self.baseline.to(self.device)
+            self.baseline.to(device=self.device, dtype=self._model_dtype)
             if self.baseline_trainable:
                 for param in self.baseline.parameters():
                     param.requires_grad_(True)
@@ -1555,9 +1559,15 @@ class PotentialTrainer:
         log_interval_steps = max(int(self.config.log_every_steps), 1)
         for step, batch in enumerate(dataloader, start=1):
             batch_start = perf_counter()
-            batch = {
-                key: value.to(self.device) for key, value in batch.items() if isinstance(value, torch.Tensor)
-            }
+            cast_batch = {}
+            for key, value in batch.items():
+                if not isinstance(value, torch.Tensor):
+                    continue
+                moved = value.to(self.device)
+                if moved.is_floating_point():
+                    moved = moved.to(self._model_dtype)
+                cast_batch[key] = moved
+            batch = cast_batch
             energies = batch["energies"]
             formula_vectors = batch["formula_vectors"]
             requires_force_grad = (
