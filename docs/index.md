@@ -47,6 +47,15 @@ trainers automatically evaluate the best checkpoint on the test data, log the
 metrics, and save a ``*_test_predictions.png`` scatter plot in the run
 directory.
 
+The CLI also exposes dedicated prediction commands for evaluating existing
+checkpoints. ``deltamol predict-baseline <dataset> <checkpoint>`` loads a linear
+baseline, computes regression metrics on the provided dataset, saves serialized
+predictions, and writes a ``baseline_predictions_<dataset>.png`` scatter plot
+plus a JSON metrics file. ``deltamol predict-potential`` mirrors this flow for
+neural potentials, rebuilding the architecture from the saved
+``experiment.yaml`` (or a path supplied via ``--experiment``) before running
+inference, plotting, and saving metrics to the chosen output directory.
+
 Both trainers support resuming interrupted runs. Pass ``--resume-from`` on the
 CLI or set ``training.resume_from`` inside an experiment YAML file; either form
 accepts an output directory containing the latest checkpoint or an explicit
