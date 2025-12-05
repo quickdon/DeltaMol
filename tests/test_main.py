@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-pytest.importorskip("torch")
+torch = pytest.importorskip("torch")
 
 from deltamol.main import run_baseline_training
 
@@ -61,3 +61,64 @@ def test_run_baseline_training_least_squares(tmp_path):
     )
 
     assert (output_dir / "baseline.pt").exists()
+
+
+def test_run_baseline_training_respects_dtype(monkeypatch, tmp_path):
+    dataset_path = tmp_path / "dataset_dtype.npz"
+    atoms = np.array(
+        [
+            np.array([1, 1]),
+            np.array([1, 8]),
+        ],
+        dtype=object,
+    )
+    coordinates = np.array(
+        [
+            np.zeros((2, 3), dtype=np.float32),
+            np.ones((2, 3), dtype=np.float32),
+        ],
+        dtype=object,
+    )
+    energies = np.array([-1.0, -2.0], dtype=np.float64)
+    np.savez(dataset_path, atoms=atoms, coordinates=coordinates, Etot=energies)
+
+    captured = {}
+
+    def fake_train_baseline(formula_vectors, energy_values, *, species, config):
+        class DummyDistributed:
+            def is_main_process(self):
+                return True
+
+        class DummyTrainer:
+            def __init__(self):
+                self.model = None
+                self.history = {}
+                self.device = torch.device("cpu")
+                self.distributed = DummyDistributed()
+                self.best_checkpoint_path = None
+                self.last_checkpoint_path = None
+
+            def save_checkpoint(self, path):
+                path.write_text("checkpoint")
+
+        captured["formula_dtype"] = formula_vectors.dtype
+        captured["energy_dtype"] = energy_values.dtype
+        return DummyTrainer()
+
+    monkeypatch.setattr("deltamol.main.train_baseline", fake_train_baseline)
+
+    output_dir = tmp_path / "run_dtype"
+
+    run_baseline_training(
+        dataset_path,
+        output_dir,
+        epochs=1,
+        batch_size=2,
+        learning_rate=1e-2,
+        validation_split=0.0,
+        test_split=0.0,
+        dtype="float64",
+    )
+
+    assert captured["formula_dtype"] == torch.float64
+    assert captured["energy_dtype"] == torch.float64
