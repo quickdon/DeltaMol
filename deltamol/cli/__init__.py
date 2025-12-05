@@ -231,6 +231,7 @@ def _train_baseline(args: argparse.Namespace) -> None:
         mixed_precision=True if args.mixed_precision else None,
         autocast_dtype=args.precision_dtype,
         grad_scaler=grad_scaler,
+        dtype=args.dtype,
         update_frequency=args.update_frequency,
         num_workers=args.num_workers,
         log_every_steps=args.log_every_steps,
@@ -503,6 +504,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="CANON=FIELD",
         help="Map dataset fields to canonical keys (repeatable)",
+    )
+    train_parser.add_argument(
+        "--dtype",
+        type=str,
+        default=None,
+        help="Torch dtype to load baseline training data with (default: float32)",
     )
     train_parser.add_argument("--output", type=Path, default=None)
     train_parser.add_argument(

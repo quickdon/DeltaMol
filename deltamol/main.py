@@ -21,6 +21,22 @@ from .utils.logging import configure_logging
 LOGGER = logging.getLogger(__name__)
 
 
+def _resolve_dtype(dtype: torch.dtype | str | None) -> torch.dtype:
+    """Normalise dtype inputs to a torch.dtype instance."""
+
+    if dtype is None:
+        return torch.float32
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    name = str(dtype).lower()
+    aliases = {"fp16": "float16", "fp32": "float32", "fp64": "float64", "bf16": "bfloat16"}
+    resolved_name = aliases.get(name, name)
+    resolved = getattr(torch, resolved_name, None)
+    if not isinstance(resolved, torch.dtype):
+        raise ValueError(f"Unknown dtype '{dtype}'")
+    return resolved
+
+
 def run_baseline_training(
     dataset_path: Path,
     output_dir: Path,
@@ -44,6 +60,7 @@ def run_baseline_training(
     mixed_precision: Optional[bool] = None,
     autocast_dtype: Optional[str] = None,
     grad_scaler: Optional[bool] = None,
+    dtype: torch.dtype | str | None = None,
     log_every_steps: Optional[int] = None,
     tensorboard: Optional[bool] = None,
     seed: Optional[int] = None,
@@ -54,6 +71,7 @@ def run_baseline_training(
     """Train the linear atomic baseline on a dataset."""
 
     configure_logging(output_dir)
+    data_dtype = _resolve_dtype(dtype)
     dataset = load_dataset(dataset_path, format=dataset_format, key_map=dataset_key_map)
     if dataset.energies is None:
         raise ValueError("Baseline training requires energies in the dataset")
@@ -74,8 +92,8 @@ def run_baseline_training(
             )
         test_formula_vectors = torch.stack(
             [build_formula_vector(atoms, species=species) for atoms in test_data.atoms]
-        )
-        test_energies_tensor = torch.as_tensor(test_data.energies, dtype=torch.float32).squeeze(-1)
+        ).to(data_dtype)
+        test_energies_tensor = torch.as_tensor(test_data.energies, dtype=data_dtype).squeeze(-1)
         test_dataset_tensors = TensorDataset(test_formula_vectors, test_energies_tensor)
     if is_main_process():
         LOGGER.info(
@@ -85,8 +103,8 @@ def run_baseline_training(
         )
     formula_vectors = torch.stack(
         [build_formula_vector(atoms, species=species) for atoms in dataset.atoms]
-    )
-    energies = torch.as_tensor(dataset.energies, dtype=torch.float32).squeeze(-1)
+    ).to(data_dtype)
+    energies = torch.as_tensor(dataset.energies, dtype=data_dtype).squeeze(-1)
     override_kwargs = {}
     if mixed_precision is not None:
         override_kwargs["mixed_precision"] = mixed_precision
