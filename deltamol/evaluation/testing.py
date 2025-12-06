@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+import numpy as np
+
 import torch
 from torch.utils.data import DataLoader, Dataset
 
@@ -56,7 +58,13 @@ def evaluate_potential_model(
     batch_size: int = 32,
     num_workers: int = 0,
     device: Optional[torch.device] = None,
-) -> Tuple[Dict[str, float], torch.Tensor, torch.Tensor]:
+) -> Tuple[
+    Dict[str, float],
+    torch.Tensor,
+    torch.Tensor,
+    Optional[torch.Tensor],
+    Optional[torch.Tensor],
+]:
     """Evaluate a potential model on a dataset returning metrics and predictions."""
 
     from ..training.datasets import collate_graphs
@@ -144,12 +152,33 @@ def evaluate_potential_model(
     all_predictions = torch.cat(energy_predictions) if energy_predictions else torch.tensor([])
     all_targets = torch.cat(energy_targets) if energy_targets else torch.tensor([])
     metrics = compute_regression_metrics(all_predictions, all_targets)
+    all_force_predictions_tensor: Optional[torch.Tensor]
+    all_force_targets_tensor: Optional[torch.Tensor]
+    all_force_predictions_tensor = None
+    all_force_targets_tensor = None
     if force_predictions:
-        all_force_predictions = torch.cat(force_predictions)
-        all_force_targets = torch.cat(force_targets)
-        force_metrics = compute_regression_metrics(all_force_predictions, all_force_targets)
+        all_force_predictions_tensor = torch.cat(force_predictions)
+        all_force_targets_tensor = torch.cat(force_targets)
+        force_metrics = compute_regression_metrics(
+            all_force_predictions_tensor, all_force_targets_tensor
+        )
         metrics.update({f"force_{name}": value for name, value in force_metrics.items()})
-    return metrics, all_predictions, all_targets
+        if all_force_predictions_tensor.numel() % 3 == 0:
+            per_atom_force_pred = all_force_predictions_tensor.view(-1, 3).mean(dim=1)
+            per_atom_force_target = all_force_targets_tensor.view(-1, 3).mean(dim=1)
+            per_atom_metrics = compute_regression_metrics(
+                per_atom_force_pred, per_atom_force_target
+            )
+            metrics.update(
+                {f"force_per_atom_{name}": value for name, value in per_atom_metrics.items()}
+            )
+    return (
+        metrics,
+        all_predictions,
+        all_targets,
+        all_force_predictions_tensor,
+        all_force_targets_tensor,
+    )
 
 
 def plot_predictions_vs_targets(
@@ -187,5 +216,36 @@ __all__ = [
     "evaluate_baseline_model",
     "evaluate_potential_model",
     "plot_predictions_vs_targets",
+    "save_predictions_and_targets",
+    "save_force_predictions_and_targets",
 ]
+
+
+def save_predictions_and_targets(
+    predictions: torch.Tensor, targets: torch.Tensor, output_path: Path
+) -> Path:
+    """Persist flattened predictions and targets to an ``.npz`` archive."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        output_path,
+        predictions=predictions.detach().cpu().numpy().reshape(-1),
+        targets=targets.detach().cpu().numpy().reshape(-1),
+    )
+    return output_path
+
+
+def save_force_predictions_and_targets(
+    predictions: torch.Tensor, targets: torch.Tensor, output_path: Path
+) -> Path:
+    """Persist force predictions and targets while preserving atom triplets."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    predictions_cpu = predictions.detach().cpu().numpy()
+    targets_cpu = targets.detach().cpu().numpy()
+    if predictions_cpu.size % 3 == 0 and targets_cpu.size % 3 == 0:
+        predictions_cpu = predictions_cpu.reshape(-1, 3)
+        targets_cpu = targets_cpu.reshape(-1, 3)
+    np.savez(output_path, predictions=predictions_cpu, targets=targets_cpu)
+    return output_path
 

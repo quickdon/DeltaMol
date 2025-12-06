@@ -4,6 +4,8 @@ from .testing import (
     evaluate_baseline_model,
     evaluate_potential_model,
     plot_predictions_vs_targets,
+    save_force_predictions_and_targets,
+    save_predictions_and_targets,
 )
 
 __all__ = [
@@ -11,4 +13,6 @@ __all__ = [
     "evaluate_baseline_model",
     "evaluate_potential_model",
     "plot_predictions_vs_targets",
+    "save_force_predictions_and_targets",
+    "save_predictions_and_targets",
 ]

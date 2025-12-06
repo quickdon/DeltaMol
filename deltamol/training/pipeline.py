@@ -26,6 +26,8 @@ from ..evaluation.testing import (
     evaluate_baseline_model,
     evaluate_potential_model,
     plot_predictions_vs_targets,
+    save_force_predictions_and_targets,
+    save_predictions_and_targets,
 )
 from ..models.baseline import LinearAtomicBaseline, LinearBaselineConfig
 from ..models.potential import PotentialOutput
@@ -65,6 +67,16 @@ def _emit_info(message: str) -> None:
     LOGGER.info(message)
     if not (LOGGER.hasHandlers() and LOGGER.isEnabledFor(logging.INFO)):
         print(message)
+
+
+def _log_test_metrics(prefix: str, metrics: Dict[str, float]) -> None:
+    """Log test metrics in a human-friendly format."""
+
+    if not metrics:
+        return
+    _emit_info(f"{prefix} test metrics:")
+    for name, value in sorted(metrics.items()):
+        _emit_info(f"  {name}: {value:.6f}")
 
 
 def _describe_device(device: torch.device) -> str:
@@ -1185,6 +1197,13 @@ def train_baseline(
                 num_workers=config.num_workers,
             )
             trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+            _log_test_metrics("Baseline", test_metrics)
+            results_path = config.output_dir / "baseline_test_results.npz"
+            try:
+                save_predictions_and_targets(predictions, targets, results_path)
+                _emit_info(f"Saved baseline test predictions to {results_path}")
+            except Exception:  # pragma: no cover - best effort persistence
+                _emit_info("Failed to save baseline test predictions; continuing without them")
             plot_path = config.output_dir / "baseline_test_predictions.png"
             try:
                 plot_predictions_vs_targets(
@@ -1981,7 +2000,13 @@ def train_potential_model(
             val_loader = None
         trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
         if test_dataset is not None and len(test_dataset) > 0:
-            test_metrics, predictions, targets = evaluate_potential_model(
+            (
+                test_metrics,
+                predictions,
+                targets,
+                force_predictions,
+                force_targets,
+            ) = evaluate_potential_model(
                 trainer.model,
                 test_dataset,
                 baseline=baseline,
@@ -1991,6 +2016,24 @@ def train_potential_model(
                 device=trainer.device,
             )
             trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+            _log_test_metrics("Potential", test_metrics)
+            results_path = config.output_dir / "potential_test_results.npz"
+            try:
+                save_predictions_and_targets(predictions, targets, results_path)
+                _emit_info(f"Saved potential test predictions to {results_path}")
+            except Exception:  # pragma: no cover - best effort persistence
+                _emit_info("Failed to save potential test predictions; continuing without them")
+            if force_predictions is not None and force_targets is not None:
+                force_results_path = config.output_dir / "potential_test_forces.npz"
+                try:
+                    save_force_predictions_and_targets(
+                        force_predictions, force_targets, force_results_path
+                    )
+                    _emit_info(f"Saved potential test force predictions to {force_results_path}")
+                except Exception:  # pragma: no cover - best effort persistence
+                    _emit_info(
+                        "Failed to save potential test force predictions; continuing without them"
+                    )
             plot_path = config.output_dir / "potential_test_predictions.png"
             try:
                 plot_predictions_vs_targets(

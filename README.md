@@ -301,9 +301,13 @@ Both trainers support automated testing on held-out data. Add `--test-split` to
 reserve a fraction of the training dataset for final evaluation, or provide a
 dedicated file via `--test-dataset` (optionally overriding auto-detection with
 `--test-dataset-format`). After training, the best baseline or potential
-checkpoint is evaluated on the test data, logging MSE, RMSE, and MAE values and
-saving a `baseline_test_predictions.png` or `potential_test_predictions.png`
-scatter plot that compares predictions against the true energies.
+checkpoint is evaluated on the test data, logging MSE, RMSE, and MAE values,
+writing the full prediction/target arrays to `baseline_test_results.npz` or
+`potential_test_results.npz`, and saving a `baseline_test_predictions.png` or
+`potential_test_predictions.png` scatter plot that compares predictions against
+the true energies. When forces are evaluated, the test report additionally logs
+force metrics (component-wise and averaged per atom) and writes the full force
+prediction/target arrays to `potential_test_forces.npz`.
 
 Trained models can also be reused for stand-alone evaluation or application.
 Use `deltamol predict-baseline DATASET CHECKPOINT` to load a baseline
