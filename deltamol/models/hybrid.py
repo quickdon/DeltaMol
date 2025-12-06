@@ -32,6 +32,28 @@ class HybridPotentialConfig:
     predict_forces: bool = False
 
 
+def _validate_attention_heads(hidden_dim: int, num_heads: int) -> None:
+    """Ensure the attention head configuration is valid.
+
+    ``torch.nn.MultiheadAttention`` requires that ``hidden_dim`` is divisible
+    by ``num_heads``. When users misconfigure this relationship the underlying
+    module raises a generic ``AssertionError``. Performing the check here
+    surfaces a clear, actionable ``ValueError`` instead so that the offending
+    configuration can be corrected before model construction begins.
+    """
+
+    if hidden_dim % num_heads == 0:
+        return
+
+    valid_heads = [d for d in range(1, hidden_dim + 1) if hidden_dim % d == 0]
+    suggestion = ", ".join(str(d) for d in valid_heads)
+    raise ValueError(
+        "hidden_dim must be divisible by num_heads for multi-head attention "
+        f"(got hidden_dim={hidden_dim}, num_heads={num_heads}). "
+        f"Choose num_heads from the divisors of hidden_dim: {suggestion}"
+    )
+
+
 class _ResidualGCNLayer(nn.Module):
     """GCN block with residual connection and layer normalization."""
 
@@ -103,6 +125,7 @@ class HybridPotential(nn.Module):
         self.config = config
         num_species = len(config.species)
         self.embedding = nn.Embedding(num_species + 1, config.hidden_dim, padding_idx=0)
+        _validate_attention_heads(config.hidden_dim, config.num_heads)
         if config.use_coordinate_features:
             soap_config = AtomicSOAPConfig(
                 num_radial=config.soap_num_radial,

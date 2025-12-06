@@ -45,6 +45,20 @@ def test_hybrid_forward_pass_runs():
     assert output.forces.shape == (2, 4, 3)
 
 
+def test_hybrid_rejects_invalid_head_configuration():
+    species = (1, 6)
+    config = HybridPotentialConfig(
+        species=species,
+        hidden_dim=128,
+        num_heads=5,
+        gcn_layers=1,
+        transformer_layers=1,
+    )
+
+    with pytest.raises(ValueError, match="hidden_dim must be divisible"):
+        HybridPotential(config)
+
+
 def test_hybrid_forces_match_finite_difference():
     torch.manual_seed(0)
     species = (1,)
