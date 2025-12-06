@@ -96,6 +96,8 @@ def evaluate_potential_model(
         baseline.eval()
     energy_predictions = []
     energy_targets = []
+    energy_per_atom_predictions = []
+    energy_per_atom_targets = []
     force_predictions = []
     force_targets = []
     for batch in loader:
@@ -130,6 +132,9 @@ def evaluate_potential_model(
                 energy_pred = energy_pred + baseline_energy
         energy_predictions.append(energy_pred.detach().cpu())
         energy_targets.append(energy_target.detach().cpu())
+        atom_counts = batch["mask"].sum(dim=1).clamp(min=1).to(energy_pred.dtype)
+        energy_per_atom_predictions.append((energy_pred / atom_counts).detach().cpu())
+        energy_per_atom_targets.append((energy_target / atom_counts).detach().cpu())
         if forces_available:
             mask = batch["mask"].to(model_device)
             mask_expanded = mask.unsqueeze(-1).expand_as(batch["positions"])
@@ -152,6 +157,15 @@ def evaluate_potential_model(
     all_predictions = torch.cat(energy_predictions) if energy_predictions else torch.tensor([])
     all_targets = torch.cat(energy_targets) if energy_targets else torch.tensor([])
     metrics = compute_regression_metrics(all_predictions, all_targets)
+    if energy_per_atom_predictions:
+        all_energy_per_atom_predictions = torch.cat(energy_per_atom_predictions)
+        all_energy_per_atom_targets = torch.cat(energy_per_atom_targets)
+        energy_per_atom_metrics = compute_regression_metrics(
+            all_energy_per_atom_predictions, all_energy_per_atom_targets
+        )
+        metrics.update(
+            {f"energy_per_atom_{name}": value for name, value in energy_per_atom_metrics.items()}
+        )
     all_force_predictions_tensor: Optional[torch.Tensor]
     all_force_targets_tensor: Optional[torch.Tensor]
     all_force_predictions_tensor = None
