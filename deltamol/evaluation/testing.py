@@ -164,11 +164,16 @@ def evaluate_potential_model(
         )
         metrics.update({f"force_{name}": value for name, value in force_metrics.items()})
         if all_force_predictions_tensor.numel() % 3 == 0:
-            per_atom_force_pred = all_force_predictions_tensor.view(-1, 3).mean(dim=1)
-            per_atom_force_target = all_force_targets_tensor.view(-1, 3).mean(dim=1)
-            per_atom_metrics = compute_regression_metrics(
-                per_atom_force_pred, per_atom_force_target
-            )
+            per_atom_force_pred = all_force_predictions_tensor.view(-1, 3)
+            per_atom_force_target = all_force_targets_tensor.view(-1, 3)
+            per_atom_diff = per_atom_force_pred - per_atom_force_target
+            per_atom_component_mse = (per_atom_diff**2).mean(dim=1)
+            per_atom_component_mae = per_atom_diff.abs().mean(dim=1)
+            per_atom_metrics = {
+                "mse": per_atom_component_mse.mean().item(),
+                "rmse": per_atom_component_mse.mean().sqrt().item(),
+                "mae": per_atom_component_mae.mean().item(),
+            }
             metrics.update(
                 {f"force_per_atom_{name}": value for name, value in per_atom_metrics.items()}
             )
