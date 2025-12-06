@@ -40,8 +40,12 @@ def test_evaluate_potential_model(tmp_path):
     )
     graph_dataset = MolecularGraphDataset(dataset, species=(1,))
     model = DummyPotential()
-    metrics, predictions, targets = evaluate_potential_model(model, graph_dataset)
+    metrics, predictions, targets, force_predictions, force_targets = evaluate_potential_model(
+        model, graph_dataset
+    )
     assert metrics["mae"] < 1e-6
+    assert force_predictions is None
+    assert force_targets is None
     plot_path = tmp_path / "potential.png"
     saved_path = plot_predictions_vs_targets(predictions, targets, plot_path)
     assert saved_path.exists()
@@ -74,6 +78,11 @@ def test_evaluate_potential_model_with_forces():
     )
     graph_dataset = MolecularGraphDataset(dataset, species=(1,))
     model = DummyForcePotential()
-    metrics, _, _ = evaluate_potential_model(model, graph_dataset)
+    metrics, _, _, force_predictions, force_targets = evaluate_potential_model(
+        model, graph_dataset
+    )
     assert metrics["force_mae"] < 1e-6
+    assert metrics["force_per_atom_mae"] < 1e-6
+    assert force_predictions is not None
+    assert force_targets is not None
 

@@ -40,6 +40,8 @@ from ..evaluation.testing import (
     evaluate_baseline_model,
     evaluate_potential_model,
     plot_predictions_vs_targets,
+    save_force_predictions_and_targets,
+    save_predictions_and_targets,
 )
 from ..training.configs import BaselineConfig, ModelConfig, PotentialExperimentConfig
 from ..training.datasets import MolecularGraphDataset
@@ -194,6 +196,15 @@ def _save_predictions(
     return output_path
 
 
+def _save_force_predictions(
+    predictions: torch.Tensor, targets: torch.Tensor, output_dir: Path, prefix: str
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{prefix}_force_predictions.pt"
+    torch.save({"predictions": predictions, "targets": targets}, output_path)
+    return output_path
+
+
 def _load_baseline(
     baseline_cfg: Optional[BaselineConfig], species: Sequence[int]
 ) -> Tuple[Optional[LinearAtomicBaseline], bool]:
@@ -329,7 +340,13 @@ def _predict_potential(args: argparse.Namespace) -> None:
     batch_size = args.batch_size or experiment.training.batch_size
     num_workers = args.num_workers or experiment.training.num_workers
     residual_mode = experiment.model.residual_mode
-    metrics, predictions, targets = evaluate_potential_model(
+    (
+        metrics,
+        predictions,
+        targets,
+        force_predictions,
+        force_targets,
+    ) = evaluate_potential_model(
         model,
         graph_dataset,
         baseline=baseline,
@@ -351,10 +368,25 @@ def _predict_potential(args: argparse.Namespace) -> None:
     predictions_path = _save_predictions(
         predictions, targets, output_dir, f"potential_{dataset_path.stem}"
     )
+    if force_predictions is not None and force_targets is not None:
+        _save_force_predictions(
+            force_predictions, force_targets, output_dir, f"potential_{dataset_path.stem}"
+        )
+        save_force_predictions_and_targets(
+            force_predictions,
+            force_targets,
+            output_dir / f"potential_force_results_{dataset_path.stem}.npz",
+        )
     if is_main_process():
         LOGGER.info("Saved potential metrics to %s", metrics_path)
         LOGGER.info("Saved potential predictions to %s", predictions_path)
         LOGGER.info("Saved potential scatter plot to %s", plot_path)
+        if force_predictions is not None and force_targets is not None:
+            LOGGER.info(
+                "Saved potential force predictions to %s and %s",
+                output_dir / f"potential_{dataset_path.stem}_force_predictions.pt",
+                output_dir / f"potential_force_results_{dataset_path.stem}.npz",
+            )
 
 
 def _train_baseline(args: argparse.Namespace) -> None:
@@ -560,7 +592,13 @@ def _train_potential(args: argparse.Namespace) -> None:
         residual_mode=experiment.model.residual_mode,
     )
     if test_graph_dataset is not None:
-        test_metrics, predictions, targets = evaluate_potential_model(
+        (
+            test_metrics,
+            predictions,
+            targets,
+            force_predictions,
+            force_targets,
+        ) = evaluate_potential_model(
             trainer.model,
             test_graph_dataset,
             baseline=baseline,
@@ -570,6 +608,25 @@ def _train_potential(args: argparse.Namespace) -> None:
             device=trainer.device,
         )
         trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+        results_path = training_cfg.output_dir / "potential_test_results.npz"
+        try:
+            save_predictions_and_targets(predictions, targets, results_path)
+            if is_main_process():
+                LOGGER.info("Saved potential test predictions to %s", results_path)
+        except Exception as exc:  # pragma: no cover - best effort persistence
+            if is_main_process():
+                LOGGER.warning("Failed to save potential test predictions: %s", exc)
+        if force_predictions is not None and force_targets is not None:
+            force_results_path = training_cfg.output_dir / "potential_test_forces.npz"
+            try:
+                save_force_predictions_and_targets(
+                    force_predictions, force_targets, force_results_path
+                )
+                if is_main_process():
+                    LOGGER.info("Saved potential test force predictions to %s", force_results_path)
+            except Exception as exc:  # pragma: no cover - best effort persistence
+                if is_main_process():
+                    LOGGER.warning("Failed to save potential test force predictions: %s", exc)
         plot_path = training_cfg.output_dir / "potential_test_predictions.png"
         try:
             plot_predictions_vs_targets(

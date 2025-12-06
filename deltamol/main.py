@@ -13,7 +13,11 @@ from torch.utils.data import TensorDataset
 from .config.manager import save_config
 from .data.io import load_dataset
 from .models.baseline import build_formula_vector
-from .evaluation.testing import evaluate_baseline_model, plot_predictions_vs_targets
+from .evaluation.testing import (
+    evaluate_baseline_model,
+    plot_predictions_vs_targets,
+    save_predictions_and_targets,
+)
 from .training.pipeline import TrainingConfig, train_baseline
 from .utils import is_main_process
 from .utils.logging import configure_logging
@@ -211,6 +215,15 @@ def run_baseline_training(
             device=trainer.device,
         )
         trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+        LOGGER.info("Baseline test metrics:")
+        for name, value in sorted(test_metrics.items()):
+            LOGGER.info("  %s: %.6f", name, value)
+        results_path = output_dir / "baseline_test_results.npz"
+        try:
+            save_predictions_and_targets(predictions, targets, results_path)
+            LOGGER.info("Saved baseline test predictions to %s", results_path)
+        except Exception as exc:  # pragma: no cover - best effort persistence
+            LOGGER.warning("Failed to save baseline test predictions: %s", exc)
         plot_path = config.output_dir / "baseline_test_predictions.png"
         try:
             plot_predictions_vs_targets(
