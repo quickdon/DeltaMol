@@ -61,6 +61,34 @@ CLI or set ``training.resume_from`` inside an experiment YAML file; either form
 accepts an output directory containing the latest checkpoint or an explicit
 checkpoint path such as ``potential_last.pt``.
 
+## Loss configuration
+
+Potential training exposes two optional normalisation schemes to balance the
+relative scale of energy and force supervision:
+
+* ``training.energy_per_atom_loss`` – when ``true``, the trainer divides both
+  predicted and target energies by each molecule's atom count before computing
+  the MSE. This normalises the extensive energy to an intensive per-atom value,
+  preventing large systems from overwhelming the loss when forces are also
+  supervised.
+* ``training.relative_force_loss`` – when ``true``, the trainer computes force
+  errors relative to the target magnitude: ``(pred − target) / (|target| +
+  relative_force_epsilon)``. Set ``training.relative_force_epsilon`` to a small
+  positive constant (default ``1e-3``) to avoid divide-by-zero. This mirrors the
+  DeepMD relative force strategy, reducing the dominance of outlier atoms with
+  very large forces and keeping small-force regions well represented.
+
+Example experiment YAML fragment:
+
+```yaml
+training:
+  energy_per_atom_loss: true
+  relative_force_loss: true
+  relative_force_epsilon: 1.0e-3
+  energy_weight: 1.0
+  force_weight: 1.0
+```
+
 When datasets use different field names, specify a mapping between the
 canonical keys (``atoms``, ``coordinates``, ``energies``, ``forces``) and the raw
 columns either on the CLI or inside the experiment YAML. Additional arrays are
