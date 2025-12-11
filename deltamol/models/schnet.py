@@ -122,7 +122,7 @@ class SchNetPotential(nn.Module):
         self,
         node_indices: torch.Tensor,
         positions: torch.Tensor,
-        adjacency: torch.Tensor,
+        adjacency: torch.Tensor | None,
         mask: torch.Tensor,
     ) -> PotentialOutput:
         mask_bool = mask.bool()
@@ -131,8 +131,17 @@ class SchNetPotential(nn.Module):
             positions = positions.clone().detach().requires_grad_(True)
 
         distances, neighbour_mask = _masked_distances(positions, mask_bool)
-        # Respect provided adjacency to filter neighbours.
-        neighbour_mask = neighbour_mask & (adjacency > 0)
+        # Apply cutoff-based neighbourhoods when no adjacency is supplied and
+        # enforce the cutoff even when an adjacency is provided.
+        cutoff_mask = distances <= self.config.cutoff
+        if adjacency is None:
+            neighbour_mask = neighbour_mask & cutoff_mask
+        else:
+            neighbour_mask = neighbour_mask & adjacency.bool() & cutoff_mask
+
+        # Exclude self-interactions to mirror the original SchNet design.
+        eye = torch.eye(neighbour_mask.size(1), device=neighbour_mask.device, dtype=torch.bool)
+        neighbour_mask = neighbour_mask & ~eye.unsqueeze(0)
         rbf = self.distance_expansion(distances) * neighbour_mask.unsqueeze(-1)
 
         features = self.embedding(node_indices)
