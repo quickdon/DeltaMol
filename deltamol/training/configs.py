@@ -35,7 +35,15 @@ class BaselineConfig:
 class ModelConfig:
     """Lightweight description of the neural potential to construct."""
 
-    name: Literal["gcn", "transformer", "external", "hybrid", "se3", "schnet"] = "transformer"
+    name: Literal[
+        "gcn",
+        "transformer",
+        "external",
+        "hybrid",
+        "se3",
+        "schnet",
+        "dimenet",
+    ] = "transformer"
     hidden_dim: int = 128
     gcn_layers: int = 2
     transformer_layers: int = 2
@@ -58,6 +66,9 @@ class ModelConfig:
     schnet_num_interactions: int = 3
     schnet_num_gaussians: int = 50
     schnet_num_filters: Optional[int] = None
+    dimenet_num_blocks: int = 3
+    dimenet_num_radial: int = 6
+    dimenet_num_spherical: int = 7
 
 
 @dataclass
