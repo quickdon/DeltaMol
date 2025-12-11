@@ -1,4 +1,5 @@
 import json
+import logging
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -22,6 +23,7 @@ from deltamol.training.pipeline import (
     Trainer,
     TrainingConfig,
     train_baseline,
+    _log_test_metrics,
 )
 
 
@@ -92,6 +94,35 @@ def test_trainer_supports_optimizer_and_scheduler(tmp_path):
     assert pytest.approx(expected_lr, rel=1e-5) == final_lr
     lr_keys = [key for key in trainer.history if key.startswith("lr/")]
     assert lr_keys, "learning rate history should be recorded when scheduler is active"
+
+
+def test_log_test_metrics_outputs_energy_per_atom(capsys):
+    logger = logging.getLogger("deltamol.training.pipeline")
+    original_handlers = list(logger.handlers)
+    original_level = logger.level
+    original_propagate = logger.propagate
+
+    try:
+        for handler in original_handlers:
+            logger.removeHandler(handler)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        metrics = {"mae": 1.0, "energy_per_atom_mae": 0.1, "force_mae": 0.2}
+        _log_test_metrics("Potential", metrics)
+    finally:
+        logger.handlers.clear()
+        for handler in original_handlers:
+            logger.addHandler(handler)
+        logger.setLevel(original_level)
+        logger.propagate = original_propagate
+
+    captured = capsys.readouterr().out.strip().splitlines()
+    assert captured == [
+        "Potential test metrics:",
+        "  energy_per_atom_mae: 0.100000",
+        "  force_mae: 0.200000",
+        "  mae: 1.000000",
+    ]
 
 
 def test_trainer_gradient_accumulation(tmp_path):

@@ -44,6 +44,7 @@ def test_evaluate_potential_model(tmp_path):
         model, graph_dataset
     )
     assert metrics["mae"] < 1e-6
+    assert metrics["energy_per_atom_mae"] < 1e-6
     assert force_predictions is None
     assert force_targets is None
     plot_path = tmp_path / "potential.png"
@@ -82,7 +83,7 @@ def test_evaluate_potential_model_with_forces():
         model, graph_dataset
     )
     assert metrics["force_mae"] < 1e-6
-    assert metrics["force_per_atom_mae"] < 1e-6
+    assert metrics["energy_per_atom_mae"] < 1e-6
     assert force_predictions is not None
     assert force_targets is not None
 
