@@ -265,6 +265,20 @@ the baseline prediction (the default) or optimise absolute energies instead;
 override the YAML with `--residual-mode` or `--absolute-mode` on the command
 line.
 
+Energy/force loss normalisation mirrors the options available in the training
+configuration:
+
+* `energy_per_atom_loss: true` divides both predicted and target energies by the
+  per-molecule atom count before computing MSE. This keeps energy loss magnitudes
+  comparable across systems of different sizes instead of letting the total
+  energy scale with atom count overshadow the force term.
+* `relative_force_loss: true` computes the force MSE on
+  `(predicted - target) / (|target| + relative_force_epsilon)` for each force
+  component, mitigating cases where a few atoms experience very large forces.
+  Set `relative_force_epsilon` (default: `1e-3`) to control the small constant
+  added to the denominator to avoid division by zero.
+
+
 Architectures can be swapped without editing the YAML by passing
 `--model transformer`, `--model hybrid`, or `--model se3` on the CLI; the flag
 respects the same residual training flow used by the baseline so SE(3)

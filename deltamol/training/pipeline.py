@@ -1228,12 +1228,17 @@ class PotentialTrainingConfig(TrainingConfig):
     force_weight: float = 0.0
     predict_forces_directly: bool = False
     max_grad_norm: Optional[float] = None
+    energy_per_atom_loss: bool = False
+    relative_force_loss: bool = False
+    relative_force_epsilon: float = 1e-3
 
     def __post_init__(self) -> None:
         if self.best_checkpoint_name == "best.pt":
             self.best_checkpoint_name = "potential_best.pt"
         if self.last_checkpoint_name == "last.pt":
             self.last_checkpoint_name = "potential_last.pt"
+        if self.relative_force_epsilon <= 0.0:
+            raise ValueError("relative_force_epsilon must be positive")
 
 
 class PotentialTrainer:
@@ -1632,7 +1637,15 @@ class PotentialTrainer:
                         target_energy = energies
                     output = self._forward_model(batch)
                     energy_pred = output.energy
-                    energy_loss = self.energy_loss(energy_pred, target_energy)
+                    if self.config.energy_per_atom_loss:
+                        atom_counts = batch["mask"].sum(dim=1).clamp(min=1)
+                        atom_counts = atom_counts.to(dtype=energy_pred.dtype)
+                        energy_pred_for_loss = energy_pred / atom_counts
+                        target_energy_for_loss = target_energy / atom_counts
+                    else:
+                        energy_pred_for_loss = energy_pred
+                        target_energy_for_loss = target_energy
+                    energy_loss = self.energy_loss(energy_pred_for_loss, target_energy_for_loss)
                     raw_loss = self.config.energy_weight * energy_loss
                     if batch.get("forces") is not None and self.config.force_weight > 0.0:
                         if output.forces is not None and self.config.predict_forces_directly:
@@ -1648,7 +1661,13 @@ class PotentialTrainer:
                         mask = batch["mask"].unsqueeze(-1)
                         target_forces = batch["forces"] * mask
                         predicted_forces = predicted_forces * mask
-                        force_loss_tensor = self.force_loss(predicted_forces, target_forces)
+                        if self.config.relative_force_loss:
+                            denom = target_forces.abs() + self.config.relative_force_epsilon
+                            relative_diff = (predicted_forces - target_forces) / denom
+                            zeros = torch.zeros_like(relative_diff)
+                            force_loss_tensor = self.force_loss(relative_diff, zeros)
+                        else:
+                            force_loss_tensor = self.force_loss(predicted_forces, target_forces)
                         raw_loss = raw_loss + self.config.force_weight * force_loss_tensor
             energy_loss_value = float(energy_loss.detach().item())
             force_loss_value = float(force_loss_tensor.detach().item())

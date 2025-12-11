@@ -367,6 +367,53 @@ class _ResidualDataset(Dataset):
         return sample
 
 
+class _PerAtomEnergyDataset(Dataset):
+    def __init__(self):
+        self.atom_counts = [1, 2]
+
+    def __len__(self):  # pragma: no cover - trivial
+        return len(self.atom_counts)
+
+    def __getitem__(self, index: int):  # pragma: no cover - trivial
+        n_atoms = self.atom_counts[index]
+        max_atoms = 3
+        mask = torch.zeros(max_atoms, dtype=torch.float32)
+        mask[:n_atoms] = 1.0
+        positions = torch.zeros(max_atoms, 3, dtype=torch.float32)
+        adjacency = torch.zeros(max_atoms, max_atoms, dtype=torch.float32)
+        formula = torch.tensor(float(n_atoms), dtype=torch.float32)
+        energy = torch.tensor(2.0 * n_atoms, dtype=torch.float32)
+        return {
+            "energies": energy,
+            "formula_vectors": formula.unsqueeze(0),
+            "positions": positions,
+            "mask": mask,
+            "node_indices": torch.ones(max_atoms, dtype=torch.long),
+            "adjacency": adjacency,
+        }
+
+
+class _RelativeForceDataset(Dataset):
+    def __len__(self):  # pragma: no cover - trivial
+        return 1
+
+    def __getitem__(self, index: int):  # pragma: no cover - trivial
+        max_atoms = 2
+        mask = torch.tensor([1.0, 1.0], dtype=torch.float32)
+        forces = torch.tensor([[2.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=torch.float32)
+        zeros = torch.zeros_like(forces)
+        adjacency = torch.zeros(max_atoms, max_atoms, dtype=torch.float32)
+        return {
+            "energies": torch.zeros((), dtype=torch.float32),
+            "formula_vectors": torch.ones(1, dtype=torch.float32),
+            "positions": zeros,
+            "mask": mask,
+            "node_indices": torch.ones(max_atoms, dtype=torch.long),
+            "adjacency": adjacency,
+            "forces": forces,
+        }
+
+
 def test_potential_trainer_baseline_requires_grad(tmp_path):
     dataset = _ToyPotentialDataset()
     loader = DataLoader(dataset, batch_size=1, collate_fn=lambda batch: batch[0])
@@ -527,3 +574,72 @@ def test_potential_trainer_force_weight_with_residual_modes(tmp_path, residual_m
     assert final_key in history
     assert force_key in history
     assert history[force_key] >= 0.0
+
+
+def test_potential_trainer_energy_per_atom_loss(tmp_path):
+    dataset = _PerAtomEnergyDataset()
+    loader = DataLoader(dataset, batch_size=2, shuffle=False)
+
+    class _AtomCountPotential(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.offset = nn.Parameter(torch.tensor(0.0))
+
+        def forward(self, node_indices, positions, adjacency, mask):  # pragma: no cover - simple
+            del node_indices, positions, adjacency  # unused in this toy potential
+            counts = mask.sum(dim=1)
+            energy = counts.to(dtype=torch.float32) + self.offset
+            return PotentialOutput(energy=energy)
+
+    config = PotentialTrainingConfig(
+        output_dir=tmp_path,
+        epochs=1,
+        batch_size=2,
+        validation_split=0.0,
+        tensorboard=False,
+        energy_per_atom_loss=True,
+    )
+    trainer = PotentialTrainer(_AtomCountPotential(), config)
+
+    history = trainer.train(loader)
+
+    assert pytest.approx(1.0, rel=1e-5) == history["train_energy/1"]
+
+
+def test_potential_trainer_relative_force_loss(tmp_path):
+    dataset = _RelativeForceDataset()
+    loader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+    class _ZeroForcePotential(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.offset = nn.Parameter(torch.tensor(0.0))
+
+        def forward(self, node_indices, positions, adjacency, mask):  # pragma: no cover - simple
+            batch_size, max_atoms, _ = positions.shape
+            del node_indices, adjacency, mask  # unused in this toy potential
+            forces = torch.zeros(batch_size, max_atoms, 3, dtype=positions.dtype)
+            energy = torch.zeros(batch_size, dtype=positions.dtype) + self.offset
+            return PotentialOutput(energy=energy, forces=forces)
+
+    config = PotentialTrainingConfig(
+        output_dir=tmp_path,
+        epochs=1,
+        batch_size=1,
+        validation_split=0.0,
+        tensorboard=False,
+        force_weight=1.0,
+        predict_forces_directly=True,
+        relative_force_loss=True,
+        relative_force_epsilon=1e-3,
+    )
+    trainer = PotentialTrainer(_ZeroForcePotential(), config)
+
+    history = trainer.train(loader)
+
+    mask = dataset[0]["mask"].unsqueeze(0).unsqueeze(-1)
+    target_forces = dataset[0]["forces"].unsqueeze(0) * mask
+    denom = target_forces.abs() + config.relative_force_epsilon
+    expected_force_loss = torch.mean(((target_forces * -1.0) / denom) ** 2).item()
+
+    assert pytest.approx(expected_force_loss, rel=1e-5) == history["train_force/1"]
