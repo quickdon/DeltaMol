@@ -281,10 +281,10 @@ configuration:
 
 
 Architectures can be swapped without editing the YAML by passing
-`--model transformer`, `--model hybrid`, `--model schnet`, or `--model se3` on
-the CLI; the flag respects the same residual training flow used by the baseline
-so SE(3) Transformer runs participate in delta-learning alongside the hybrid
-potential. Additional overrides for depth (`--transformer-layers`,
+`--model transformer`, `--model hybrid`, `--model schnet`, `--model dimenet`, or
+`--model se3` on the CLI; the flag respects the same residual training flow used
+by the baseline so SE(3) Transformer runs participate in delta-learning
+alongside the hybrid potential. Additional overrides for depth (`--transformer-layers`,
 `--gcn-layers`, `--se3-layers`), width (`--hidden-dim`, `--ffn-dim`,
 `--num-heads`), and SE(3) distance embeddings (`--se3-distance-embedding`) keep
 experiments flexible without needing to duplicate configuration files. When
@@ -311,6 +311,20 @@ SchNet experiments support direct energy and force prediction. Set
 `predict_forces: true` to enable analytic forces obtained from the gradient of
 the summed energy with respect to atomic coordinates, masking out padded atoms
 using the dataset-provided adjacency for neighborhood pruning.
+
+The DimeNet option mirrors the directional message passing architecture from
+Klicpera, Groß, and Günnemann (ICLR 2020) and the
+[`gasteigerjo/dimenet`](https://github.com/gasteigerjo/dimenet) reference
+implementation. Choose `model.name: dimenet` or `--model dimenet` to enable it.
+Key hyperparameters exposed via YAML fields or CLI flags include:
+
+* `--dimenet-num-blocks` (`model.dimenet_num_blocks`) – number of directional
+  message passing blocks stacked sequentially (default 3).
+* `--dimenet-num-radial` (`model.dimenet_num_radial`) – radial Bessel basis size
+  for pairwise distance expansion (default 6) controlled by the shared
+  `cutoff`.
+* `--dimenet-num-spherical` (`model.dimenet_num_spherical`) – number of Fourier
+  components used to embed triplet angles (default 7).
 
 Dataset sections inside the experiment configuration accept the same `format`
 and `key_map` fields exposed on the CLI. Each `key_map` entry follows the

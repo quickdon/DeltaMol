@@ -70,6 +70,25 @@ Neighbour graphs respect the provided adjacency matrix; combine ``model.cutoff``
 with dataset-level cutoffs to prune long-range edges when building training
 graphs.
 
+### DimeNet potential architecture
+
+DeltaMol also includes a DimeNet-inspired directional message passing model
+following Klicpera, Groß, and Günnemann (ICLR 2020) and the reference
+implementation at `gasteigerjo/dimenet <https://github.com/gasteigerjo/dimenet>`_.
+Activate it with ``model.name: dimenet`` in the experiment YAML or ``--model
+dimenet`` on the CLI. Key hyperparameters:
+
+* ``dimenet_num_blocks`` – number of directional message passing blocks stacked
+  sequentially (default 3).
+* ``dimenet_num_radial`` – radial Bessel basis size used to expand pairwise
+  distances up to ``model.cutoff`` (default 6).
+* ``dimenet_num_spherical`` – number of Fourier components used to embed triplet
+  angles (default 7).
+
+Like SchNet, DimeNet supports optional analytic force prediction via gradients of
+the summed energy with respect to atomic coordinates; enable it with
+``predict_forces: true`` when fitting energies and forces jointly.
+
 The CLI also exposes dedicated prediction commands for evaluating existing
 checkpoints. ``deltamol predict-baseline <dataset> <checkpoint>`` loads a linear
 baseline, computes regression metrics on the provided dataset, saves serialized

@@ -1,6 +1,7 @@
 """Model definitions for DeltaMol."""
 from .adapters import AdapterInputs, PotentialModelAdapter, load_external_model
 from .baseline import LinearAtomicBaseline, LinearBaselineConfig, build_formula_vector
+from .dimenet import DimeNetConfig, DimeNetPotential
 from .hybrid import HybridPotential, HybridPotentialConfig
 from .se3 import SE3TransformerConfig, SE3TransformerPotential
 from .schnet import SchNetConfig, SchNetPotential
@@ -14,6 +15,8 @@ __all__ = [
     "PotentialModelAdapter",
     "HybridPotential",
     "HybridPotentialConfig",
+    "DimeNetConfig",
+    "DimeNetPotential",
     "SE3TransformerConfig",
     "SE3TransformerPotential",
     "SchNetConfig",
