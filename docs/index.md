@@ -47,6 +47,29 @@ trainers automatically evaluate the best checkpoint on the test data, log the
 metrics, and save a ``*_test_predictions.png`` scatter plot in the run
 directory.
 
+### SchNet potential architecture
+
+DeltaMol includes a SchNet-inspired continuous-filter convolutional potential
+for energy and (optionally) force prediction, following Schütt et al. (2018)
+and the reference implementation at
+`atomistic-machine-learning/SchNet <https://github.com/atomistic-machine-learning/SchNet>`_.
+Select the architecture with ``model.name: schnet`` in an experiment YAML or
+``--model schnet`` on the CLI. Key hyperparameters:
+
+* ``hidden_dim`` – shared embedding dimension for atomic features (default 128).
+* ``schnet_num_filters`` – number of continuous filters inside interaction blocks
+  (defaults to ``hidden_dim`` when omitted).
+* ``schnet_num_interactions`` – interaction layers stacked sequentially to
+  refine atomic features (default 3).
+* ``schnet_num_gaussians`` – radial basis size for Gaussian distance expansion
+  between neighbours (default 50) with edges truncated at ``model.cutoff``.
+* ``predict_forces`` – when ``true``, enables analytic force prediction via
+  gradients of the summed energy w.r.t. coordinates.
+
+Neighbour graphs respect the provided adjacency matrix; combine ``model.cutoff``
+with dataset-level cutoffs to prune long-range edges when building training
+graphs.
+
 The CLI also exposes dedicated prediction commands for evaluating existing
 checkpoints. ``deltamol predict-baseline <dataset> <checkpoint>`` loads a linear
 baseline, computes regression metrics on the provided dataset, saves serialized
