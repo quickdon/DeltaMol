@@ -31,6 +31,8 @@ from ..models import (
     HybridPotentialConfig,
     LinearAtomicBaseline,
     LinearBaselineConfig,
+    SchNetConfig,
+    SchNetPotential,
     SE3TransformerConfig,
     SE3TransformerPotential,
     build_formula_vector,
@@ -111,6 +113,17 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
             predict_forces=model_cfg.predict_forces,
         )
         return SE3TransformerPotential(config)
+    if name == "schnet":
+        config = SchNetConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_filters=model_cfg.schnet_num_filters or model_cfg.hidden_dim,
+            num_interactions=model_cfg.schnet_num_interactions,
+            num_gaussians=model_cfg.schnet_num_gaussians,
+            cutoff=model_cfg.cutoff,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return SchNetPotential(config)
     if name == "gcn":
         config = HybridPotentialConfig(
             species=species_tuple,
