@@ -52,9 +52,10 @@ class RadialBesselLayer(nn.Module):
         scaled = distances / self.cutoff
         # Smooth envelope from the DimeNet paper that goes to zero at the cutoff.
         envelope = 1 - 6 * scaled**5 + 15 * scaled**4 - 10 * scaled**3
-        bessel = torch.sin(self.freq * distances / self.cutoff) / distances
+        distances_expanded = distances.unsqueeze(-1)
+        bessel = torch.sin(self.freq * distances_expanded / self.cutoff) / distances_expanded
         norm = torch.sqrt(torch.tensor(2.0 / self.cutoff, device=distances.device, dtype=distances.dtype))
-        return norm * envelope.unsqueeze(-1) * bessel.unsqueeze(-1)
+        return norm * envelope.unsqueeze(-1) * bessel
 
 
 class AngleEmbedding(nn.Module):
