@@ -1,4 +1,10 @@
-"""SE(3)-Transformer-inspired potential energy model."""
+"""SE(3)-Transformer-inspired potential energy model.
+
+This lightweight implementation follows the attention-based design introduced in
+"SE(3)-Transformers: 3D Roto-Translation Equivariant Attention Networks"
+(Fuchs et al., NeurIPS 2020), adapting the architecture for molecular energy and
+force prediction.
+"""
 from __future__ import annotations
 
 import math
