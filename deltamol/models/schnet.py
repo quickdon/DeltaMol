@@ -9,6 +9,7 @@ continuous-filter convolution design for molecular graphs.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -130,31 +131,40 @@ class SchNetPotential(nn.Module):
         if self.config.predict_forces and not positions.requires_grad:
             positions = positions.clone().detach().requires_grad_(True)
 
-        distances, neighbour_mask = _masked_distances(positions, mask_bool)
-        # Apply cutoff-based neighbourhoods when no adjacency is supplied and
-        # enforce the cutoff even when an adjacency is provided.
-        cutoff_mask = distances <= self.config.cutoff
-        if adjacency is None:
-            neighbour_mask = neighbour_mask & cutoff_mask
-        else:
-            neighbour_mask = neighbour_mask & adjacency.bool() & cutoff_mask
+        grad_context = nullcontext()
+        if self.config.predict_forces and not torch.is_grad_enabled():
+            grad_context = torch.enable_grad()
 
-        # Exclude self-interactions to mirror the original SchNet design.
-        eye = torch.eye(neighbour_mask.size(1), device=neighbour_mask.device, dtype=torch.bool)
-        neighbour_mask = neighbour_mask & ~eye.unsqueeze(0)
-        rbf = self.distance_expansion(distances) * neighbour_mask.unsqueeze(-1)
+        with grad_context:
+            distances, neighbour_mask = _masked_distances(positions, mask_bool)
+            # Apply cutoff-based neighbourhoods when no adjacency is supplied and
+            # enforce the cutoff even when an adjacency is provided.
+            cutoff_mask = distances <= self.config.cutoff
+            if adjacency is None:
+                neighbour_mask = neighbour_mask & cutoff_mask
+            else:
+                neighbour_mask = neighbour_mask & adjacency.bool() & cutoff_mask
 
-        features = self.embedding(node_indices)
-        for interaction in self.interactions:
-            features = interaction(features, rbf, neighbour_mask)
+            # Exclude self-interactions to mirror the original SchNet design.
+            eye = torch.eye(
+                neighbour_mask.size(1), device=neighbour_mask.device, dtype=torch.bool
+            )
+            neighbour_mask = neighbour_mask & ~eye.unsqueeze(0)
+            rbf = self.distance_expansion(distances) * neighbour_mask.unsqueeze(-1)
 
-        per_atom_energy = self.atomwise(features).squeeze(-1) * mask_float
-        energy = per_atom_energy.sum(dim=1)
+            features = self.embedding(node_indices)
+            for interaction in self.interactions:
+                features = interaction(features, rbf, neighbour_mask)
 
-        forces = None
-        if self.config.predict_forces:
-            forces = -torch.autograd.grad(energy.sum(), positions, create_graph=self.training)[0]
-            forces = forces * mask_float.unsqueeze(-1)
+            per_atom_energy = self.atomwise(features).squeeze(-1) * mask_float
+            energy = per_atom_energy.sum(dim=1)
+
+            forces = None
+            if self.config.predict_forces:
+                forces = -torch.autograd.grad(
+                    energy.sum(), positions, create_graph=self.training
+                )[0]
+                forces = forces * mask_float.unsqueeze(-1)
 
         return PotentialOutput(energy=energy, forces=forces)
 
