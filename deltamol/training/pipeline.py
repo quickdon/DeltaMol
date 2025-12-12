@@ -380,6 +380,7 @@ def _build_ddp_kwargs(config: DistributedConfig, device: torch.device) -> Dict[s
     ddp_kwargs: Dict[str, object] = {
         "find_unused_parameters": config.find_unused_parameters,
         "broadcast_buffers": config.broadcast_buffers,
+        "gradient_as_bucket_view": config.gradient_as_bucket_view,
     }
     if device.type == "cuda":
         device_index = device.index if device.index is not None else torch.cuda.current_device()
