@@ -103,6 +103,43 @@ def _log_test_metrics(prefix: str, metrics: Dict[str, float]) -> None:
         _emit_info(f"  {name}: {value:.6f}")
 
 
+def _load_best_checkpoint_for_testing(trainer: "Trainer | PotentialTrainer") -> None:
+    """Load the best checkpoint onto ``trainer.model`` for test evaluation."""
+
+    best_path = getattr(trainer, "best_checkpoint_path", None)
+    if best_path is None:
+        return
+
+    distributed = getattr(trainer, "distributed", None)
+    is_distributed = distributed is not None and distributed.enabled
+    should_load = not is_distributed or distributed.is_main_process()
+    state = None
+
+    if should_load and best_path.exists():
+        try:
+            state = torch.load(best_path, map_location=trainer.device)
+        except Exception:  # pragma: no cover - defensive during best-effort load
+            _emit_info(
+                f"Failed to load best checkpoint at {best_path}; using current model for testing"
+            )
+    if is_distributed and distributed is not None:
+        state = distributed.broadcast_object(state)
+
+    if not isinstance(state, dict):
+        if should_load and state is None:
+            _emit_info(
+                f"Best checkpoint at {best_path} is unavailable; using current model for testing"
+            )
+        elif state is not None:
+            _emit_info(
+                f"Best checkpoint at {best_path} is invalid; using current model for testing"
+            )
+        return
+
+    trainer._apply_checkpoint_state(state, load_scheduler=False)
+    _emit_info(f"Loaded best checkpoint from {best_path} for testing")
+
+
 def _describe_device(device: torch.device) -> str:
     """Return a human readable representation of a torch device."""
 
@@ -1218,6 +1255,7 @@ def train_baseline(
             val_loader = None
         trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
         if test_dataset is not None and len(test_dataset) > 0:
+            _load_best_checkpoint_for_testing(trainer)
             test_metrics, predictions, targets = evaluate_baseline_model(
                 trainer.model,
                 test_dataset,
@@ -2052,6 +2090,7 @@ def train_potential_model(
             val_loader = None
         trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
         if test_dataset is not None and len(test_dataset) > 0:
+            _load_best_checkpoint_for_testing(trainer)
             (
                 test_metrics,
                 predictions,
