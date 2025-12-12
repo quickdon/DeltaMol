@@ -1,24 +1,23 @@
 from deltamol.utils.logging import configure_logging
 
 
-def test_configure_logging_archives_existing(tmp_path):
-    log_path = tmp_path / "training.log"
-    log_path.write_text("previous run")
-
+def test_configure_logging_creates_timestamped_log(tmp_path):
     configure_logging(tmp_path)
 
     archived = list(tmp_path.glob("training-*.log"))
-    assert archived
-    assert archived[0].read_text() == "previous run"
-    assert log_path.exists()
-    assert log_path.read_text() == ""
+    assert len(archived) == 1
+    assert archived[0].read_text() == ""
+    assert not (tmp_path / "training.log").exists()
 
 
-def test_configure_logging_resume_keeps_existing_log(tmp_path):
-    log_path = tmp_path / "training.log"
-    log_path.write_text("keep me")
+def test_configure_logging_resume_uses_latest_timestamped_log(tmp_path):
+    first_log = tmp_path / "training-20240101-000000.log"
+    first_log.write_text("keep me")
+    later_log = tmp_path / "training-20240102-000000.log"
+    later_log.write_text("append here")
 
     configure_logging(tmp_path, resume=True)
 
-    assert not list(tmp_path.glob("training-*.log"))
-    assert log_path.read_text().startswith("keep me")
+    archived = sorted(tmp_path.glob("training-*.log"))
+    assert len(archived) == 2
+    assert archived[-1].read_text().startswith("append here")
