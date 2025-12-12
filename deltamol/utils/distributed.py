@@ -35,6 +35,7 @@ class DistributedConfig:
     timeout_minutes: float = 30.0
     find_unused_parameters: bool = False
     broadcast_buffers: bool = True
+    gradient_as_bucket_view: bool = True
     auto_discover: bool = True
     devices: Optional[Union[Sequence[int], str]] = None
 
