@@ -2,6 +2,7 @@
 from .adapters import AdapterInputs, PotentialModelAdapter, load_external_model
 from .baseline import LinearAtomicBaseline, LinearBaselineConfig, build_formula_vector
 from .dimenet import DimeNetConfig, DimeNetPotential
+from .equiformer_v2 import EquiformerV2Config, EquiformerV2Potential
 from .gemnet import GemNetConfig, GemNetPotential
 from .hybrid import HybridPotential, HybridPotentialConfig
 from .se3 import SE3TransformerConfig, SE3TransformerPotential
@@ -16,6 +17,8 @@ __all__ = [
     "PotentialModelAdapter",
     "HybridPotential",
     "HybridPotentialConfig",
+    "EquiformerV2Config",
+    "EquiformerV2Potential",
     "GemNetConfig",
     "GemNetPotential",
     "DimeNetConfig",
