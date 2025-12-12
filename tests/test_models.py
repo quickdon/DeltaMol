@@ -4,6 +4,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from deltamol.models.baseline import build_formula_vector
+from deltamol.models.gemnet import GemNetConfig, GemNetPotential
 from deltamol.models.hybrid import HybridPotential, HybridPotentialConfig
 from deltamol.models.se3 import SE3TransformerConfig, SE3TransformerPotential
 
@@ -103,6 +104,31 @@ def test_hybrid_forces_match_finite_difference():
 
     assert torch.max(torch.abs(forces)) > 0
     assert torch.allclose(forces, -numeric_grad, atol=1e-2, rtol=1e-2)
+
+
+def test_gemnet_forward_pass_runs():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = GemNetConfig(
+        species=species,
+        hidden_dim=24,
+        num_blocks=2,
+        num_radial=5,
+        num_spherical=4,
+        cutoff=3.5,
+        predict_forces=True,
+    )
+    model = GemNetPotential(config)
+    node_indices = torch.tensor([[1, 2, 3, 0], [3, 1, 0, 0]], dtype=torch.long)
+    positions = torch.randn(2, 4, 3)
+    adjacency = torch.eye(4).repeat(2, 1, 1)
+    mask = node_indices != 0
+
+    output = model(node_indices, positions, adjacency, mask)
+
+    assert output.energy.shape == (2,)
+    assert output.forces is not None
+    assert output.forces.shape == (2, 4, 3)
 
 
 def test_se3_forward_pass_runs():

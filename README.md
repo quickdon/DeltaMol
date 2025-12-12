@@ -282,9 +282,10 @@ configuration:
 
 
 Architectures can be swapped without editing the YAML by passing
-`--model transformer`, `--model hybrid`, `--model schnet`, `--model dimenet`, or
-`--model se3` on the CLI; the flag respects the same residual training flow used
-by the baseline so SE(3) Transformer runs participate in delta-learning
+`--model transformer`, `--model hybrid`, `--model schnet`, `--model dimenet`,
+`--model gemnet`, or `--model se3` on the CLI; the flag respects the same
+residual training flow used by the baseline so SE(3) Transformer runs
+participate in delta-learning
 alongside the hybrid potential. Additional overrides for depth (`--transformer-layers`,
 `--gcn-layers`, `--se3-layers`), width (`--hidden-dim`, `--ffn-dim`,
 `--num-heads`), and SE(3) distance embeddings (`--se3-distance-embedding`) keep
@@ -326,6 +327,23 @@ Key hyperparameters exposed via YAML fields or CLI flags include:
   `cutoff`.
 * `--dimenet-num-spherical` (`model.dimenet_num_spherical`) – number of Fourier
   components used to embed triplet angles (default 7).
+
+The GemNet option offers a streamlined variant of the directional message
+passing model introduced by Gasteiger et al. (NeurIPS 2021) and the
+TensorFlow reference at [`TUM-DAML/gemnet_tf`](https://github.com/TUM-DAML/gemnet_tf).
+Select `model.name: gemnet` or `--model gemnet` to construct it and adjust its
+edge-focused hyperparameters via:
+
+* `--gemnet-num-blocks` (`model.gemnet_num_blocks`) – number of directional
+  message passing stages (default 3).
+* `--gemnet-num-radial` (`model.gemnet_num_radial`) – Gaussian radial basis size
+  used to embed pairwise distances up to `cutoff` (default 6).
+* `--gemnet-num-spherical` (`model.gemnet_num_spherical`) – number of directional
+  projections used to encode edge orientation (default 4).
+
+GemNet runs mirror the SchNet and DimeNet interfaces: they honour the shared
+`cutoff` value, optional analytic force prediction via `predict_forces`, and
+the same residual training flow when paired with a linear baseline.
 
 Dataset sections inside the experiment configuration accept the same `format`
 and `key_map` fields exposed on the CLI. Each `key_map` entry follows the
