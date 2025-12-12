@@ -44,6 +44,7 @@ class ModelConfig:
         "schnet",
         "dimenet",
         "gemnet",
+        "equiformer_v2",
     ] = "transformer"
     hidden_dim: int = 128
     gcn_layers: int = 2

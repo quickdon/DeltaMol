@@ -23,12 +23,12 @@ surfaces by embracing three core ideas:
 2. Cache descriptors using ``python -m deltamol.main cache-descriptors``. The
    cache is stored as an HDF5 file.
 3. Train the baseline using ``python -m deltamol.main train-baseline``.
-4. Train the hybrid SOAP-guided potential or the SE(3)-Transformer variant
-   using the cached descriptors and the `train-potential` command. The
-   architecture can be selected in the experiment YAML via `model.name` or
-   overridden on the CLI with `--model se3`, `--model gemnet`, or
-   `--model hybrid` while keeping the same residual learning flow as the
-   baseline.
+4. Train the hybrid SOAP-guided potential, the SE(3)-Transformer variant, or
+   the EquiformerV2-inspired architecture using the cached descriptors and the
+   `train-potential` command. The architecture can be selected in the
+   experiment YAML via `model.name` or overridden on the CLI with
+   `--model se3`, `--model gemnet`, `--model equiformer_v2`, or `--model hybrid`
+   while keeping the same residual learning flow as the baseline.
 
 ## Evaluation and testing
 
@@ -109,6 +109,29 @@ The GemNet implementation mirrors the SchNet and DimeNet interfaces: it honours
 the shared neighbourhood cutoff, supports optional analytic force prediction via
 ``predict_forces: true``, and trains in residual or absolute modes depending on
 the chosen baseline settings.
+
+### EquiformerV2 potential architecture
+
+DeltaMol now ships a compact EquiformerV2-style model for equivariant attention
+over molecular graphs. The design follows the radial-basis attention biasing and
+gated feedforward structure from the official implementation at
+`atomicarchitects/equiformer_v2 <https://github.com/atomicarchitects/equiformer_v2>`_,
+adapted to share the same inputs and outputs as the other potential classes.
+Select it with ``model.name: equiformer_v2`` in an experiment YAML or
+``--model equiformer_v2`` on the CLI. Key hyperparameters mirror the SE(3)
+variant for easy experimentation:
+
+* ``hidden_dim`` – shared embedding dimension for atomic features (default 128).
+* ``num_heads`` – number of attention heads inside each equivariant block
+  (default 8).
+* ``num_layers`` – stacked Equiformer blocks (defaults to SE(3) layer count
+  when ``se3_layers`` is set for backwards compatibility with existing configs).
+* ``distance_embedding_dim`` – size of the sinusoidal Bessel basis used to embed
+  pairwise distances before applying radial attention biases (default 32).
+* ``cutoff`` – neighbour radius controlling which edges participate in attention
+  when no adjacency is provided (default 5.0 Å).
+* ``predict_forces`` – enables direct per-atom force regression from pooled
+  atomic features.
 
 The CLI also exposes dedicated prediction commands for evaluating existing
 checkpoints. ``deltamol predict-baseline <dataset> <checkpoint>`` loads a linear

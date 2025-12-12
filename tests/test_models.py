@@ -4,6 +4,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from deltamol.models.baseline import build_formula_vector
+from deltamol.models.equiformer_v2 import EquiformerV2Config, EquiformerV2Potential
 from deltamol.models.gemnet import GemNetConfig, GemNetPotential
 from deltamol.models.hybrid import HybridPotential, HybridPotentialConfig
 from deltamol.models.se3 import SE3TransformerConfig, SE3TransformerPotential
@@ -173,6 +174,59 @@ def test_se3_energy_dependent_on_coordinates():
         predict_forces=False,
     )
     model = SE3TransformerPotential(config).double()
+    model.eval()
+
+    node_indices = torch.tensor([[1, 1]], dtype=torch.long)
+    positions = torch.tensor([[[0.0, 0.0, 0.0], [1.0, 0.3, -0.1]]], dtype=torch.double)
+    positions.requires_grad_(True)
+    mask = node_indices != 0
+
+    energy = model(node_indices, positions, None, mask).energy.sum()
+    grad = torch.autograd.grad(energy, positions)[0]
+
+    assert torch.max(torch.abs(grad)) > 0
+
+
+def test_equiformer_v2_forward_pass_runs():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = EquiformerV2Config(
+        species=species,
+        hidden_dim=24,
+        num_layers=2,
+        num_heads=4,
+        distance_embedding_dim=8,
+        dropout=0.0,
+        cutoff=3.5,
+        predict_forces=True,
+    )
+    model = EquiformerV2Potential(config)
+    node_indices = torch.tensor([[1, 2, 3, 0], [3, 1, 0, 0]], dtype=torch.long)
+    positions = torch.randn(2, 4, 3)
+    adjacency = torch.eye(4).repeat(2, 1, 1)
+    mask = node_indices != 0
+
+    output = model(node_indices, positions, adjacency, mask)
+
+    assert output.energy.shape == (2,)
+    assert output.forces is not None
+    assert output.forces.shape == (2, 4, 3)
+
+
+def test_equiformer_v2_energy_dependent_on_coordinates():
+    torch.manual_seed(0)
+    species = (1,)
+    config = EquiformerV2Config(
+        species=species,
+        hidden_dim=16,
+        num_layers=1,
+        num_heads=4,
+        distance_embedding_dim=6,
+        dropout=0.0,
+        cutoff=2.5,
+        predict_forces=False,
+    )
+    model = EquiformerV2Potential(config).double()
     model.eval()
 
     node_indices = torch.tensor([[1, 1]], dtype=torch.long)

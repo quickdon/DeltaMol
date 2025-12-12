@@ -31,6 +31,8 @@ from ..models import (
     HybridPotentialConfig,
     DimeNetConfig,
     DimeNetPotential,
+    EquiformerV2Config,
+    EquiformerV2Potential,
     GemNetConfig,
     GemNetPotential,
     LinearAtomicBaseline,
@@ -128,6 +130,18 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
             predict_forces=model_cfg.predict_forces,
         )
         return SchNetPotential(config)
+    if name in {"equiformer_v2", "equiformer", "equiformer-v2"}:
+        config = EquiformerV2Config(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_layers=model_cfg.se3_layers or model_cfg.transformer_layers,
+            num_heads=model_cfg.num_heads,
+            distance_embedding_dim=model_cfg.se3_distance_embedding,
+            dropout=model_cfg.dropout,
+            cutoff=model_cfg.cutoff,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return EquiformerV2Potential(config)
     if name == "dimenet":
         config = DimeNetConfig(
             species=species_tuple,
