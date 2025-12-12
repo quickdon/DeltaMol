@@ -61,7 +61,7 @@ def test_trainer_persists_history(tmp_path):
     if TENSORBOARD_AVAILABLE:
         event_dir = tmp_path / "tensorboard"
         assert event_dir.exists()
-        assert any(event_dir.glob("events.*"))
+        assert list(event_dir.rglob("events.*"))
 
 
 def test_trainer_supports_optimizer_and_scheduler(tmp_path):
@@ -477,7 +477,7 @@ def test_potential_trainer_baseline_requires_grad(tmp_path):
     if TENSORBOARD_AVAILABLE:
         event_dir = trainable_dir / "tensorboard"
         assert event_dir.exists()
-        assert any(event_dir.glob("events.*"))
+        assert list(event_dir.rglob("events.*"))
 
     frozen_dir = tmp_path / "frozen"
     frozen_config = PotentialTrainingConfig(

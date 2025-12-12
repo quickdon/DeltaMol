@@ -67,6 +67,7 @@ def run_baseline_training(
     dtype: torch.dtype | str | None = None,
     log_every_steps: Optional[int] = None,
     tensorboard: Optional[bool] = None,
+    tensorboard_dir: Optional[Path] = None,
     seed: Optional[int] = None,
     parameter_init: Optional[str] = None,
     resume_from: Optional[Path] = None,
@@ -74,7 +75,7 @@ def run_baseline_training(
 ) -> None:
     """Train the linear atomic baseline on a dataset."""
 
-    configure_logging(output_dir)
+    configure_logging(output_dir, resume=resume_from is not None)
     data_dtype = _resolve_dtype(dtype)
     dataset = load_dataset(dataset_path, format=dataset_format, key_map=dataset_key_map)
     if dataset.energies is None:
@@ -124,6 +125,8 @@ def run_baseline_training(
         override_kwargs["log_every_steps"] = log_every_steps
     if tensorboard is not None:
         override_kwargs["tensorboard"] = tensorboard
+    if tensorboard_dir is not None:
+        override_kwargs["tensorboard_dir"] = tensorboard_dir
     if seed is not None:
         override_kwargs["seed"] = seed
     if parameter_init is not None:
@@ -205,6 +208,8 @@ def run_baseline_training(
             resume_from=resume_from if resume_from is not None else config.resume_from,
             **override_kwargs,
         )
+    if isinstance(config.tensorboard_dir, str):
+        config = replace(config, tensorboard_dir=Path(config.tensorboard_dir))
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
     if test_dataset_tensors is not None:
         test_metrics, predictions, targets = evaluate_baseline_model(

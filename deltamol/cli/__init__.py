@@ -458,6 +458,7 @@ def _train_baseline(args: argparse.Namespace) -> None:
         num_workers=args.num_workers,
         log_every_steps=args.log_every_steps,
         tensorboard=False if args.no_tensorboard else None,
+        tensorboard_dir=args.tensorboard_dir,
         seed=args.seed,
         parameter_init=parameter_init,
         resume_from=args.resume_from,
@@ -546,6 +547,8 @@ def _train_potential(args: argparse.Namespace) -> None:
         overrides["log_every_steps"] = args.log_every_steps
     if args.no_tensorboard:
         overrides["tensorboard"] = False
+    if args.tensorboard_dir is not None:
+        overrides["tensorboard_dir"] = args.tensorboard_dir
     if args.seed is not None:
         overrides["seed"] = args.seed
     if args.parameter_init is not None:
@@ -595,14 +598,20 @@ def _train_potential(args: argparse.Namespace) -> None:
     if overrides:
         if "output_dir" in overrides and not isinstance(overrides["output_dir"], Path):
             overrides["output_dir"] = Path(overrides["output_dir"])
+        if "tensorboard_dir" in overrides and not isinstance(
+            overrides["tensorboard_dir"], Path
+        ):
+            overrides["tensorboard_dir"] = Path(overrides["tensorboard_dir"])
         training_cfg = replace(training_cfg, **overrides)
     elif not isinstance(training_cfg.output_dir, Path):
         training_cfg = replace(training_cfg, output_dir=Path(training_cfg.output_dir))
+    if isinstance(training_cfg.tensorboard_dir, str):
+        training_cfg = replace(training_cfg, tensorboard_dir=Path(training_cfg.tensorboard_dir))
     if experiment.model.predict_forces and not training_cfg.predict_forces_directly:
         training_cfg = replace(training_cfg, predict_forces_directly=True)
     if training_cfg.output_dir is None:
         raise ValueError("Potential training configuration must define an output directory")
-    configure_logging(training_cfg.output_dir)
+    configure_logging(training_cfg.output_dir, resume=args.resume_from is not None)
     if is_main_process():
         LOGGER.info("Training potential model using dataset at %s", dataset_path)
     model = _build_potential_model(experiment.model, species)
@@ -838,6 +847,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-tensorboard",
         action="store_true",
         help="Disable TensorBoard logging for baseline training",
+    )
+    train_parser.add_argument(
+        "--tensorboard-dir",
+        type=Path,
+        default=None,
+        help="Custom directory for TensorBoard events (default: <output>/tensorboard/<timestamp>)",
     )
     train_parser.add_argument(
         "--early-stopping-patience",
@@ -1153,6 +1168,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-tensorboard",
         action="store_true",
         help="Disable TensorBoard logging for potential training",
+    )
+    potential_parser.add_argument(
+        "--tensorboard-dir",
+        type=Path,
+        default=None,
+        help="Custom directory for TensorBoard events (default: <output>/tensorboard/<timestamp>)",
     )
     potential_parser.add_argument(
         "--parameter-init",

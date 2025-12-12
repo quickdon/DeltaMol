@@ -6,7 +6,7 @@ import logging
 import math
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
 from typing import Callable, Dict, Optional, Sequence, Tuple
@@ -57,6 +57,30 @@ def _make_grad_scaler(enabled: bool) -> _GradScalerBase:
         return _GradScalerBase(device_type="cuda", enabled=enabled)  # type: ignore[call-arg]
     except TypeError:  # pragma: no cover - torch<2.0 signature
         return _GradScalerBase(enabled=enabled)
+
+
+def _find_existing_tensorboard_dir(base_dir: Path) -> Optional[Path]:
+    if base_dir.exists():
+        if any(base_dir.glob("events.*")):
+            return base_dir
+        subdirs = sorted([path for path in base_dir.iterdir() if path.is_dir()])
+        if subdirs:
+            return subdirs[-1]
+    return None
+
+
+def _resolve_tensorboard_dir(
+    output_dir: Path, configured_dir: Optional[Path], resume: bool
+) -> Path:
+    base_dir = output_dir / "tensorboard"
+    if configured_dir is not None:
+        return Path(configured_dir)
+    if resume:
+        existing = _find_existing_tensorboard_dir(base_dir)
+        if existing is not None:
+            return existing
+    run_label = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return base_dir / run_label
 
 
 def _emit_info(message: str) -> None:
@@ -439,6 +463,7 @@ class TrainingConfig:
     resume_from: Optional[Path] = None
     distributed: DistributedConfig = field(default_factory=DistributedConfig)
     tensorboard: bool = True
+    tensorboard_dir: Optional[Path] = None
 
 
 class Trainer:
@@ -513,7 +538,11 @@ class Trainer:
                 )
                 self._summary_writer = None
             else:
-                log_dir = self.output_dir / "tensorboard"
+                log_dir = _resolve_tensorboard_dir(
+                    self.output_dir,
+                    self.config.tensorboard_dir,
+                    self.config.resume_from is not None,
+                )
                 try:
                     self._summary_writer = SummaryWriter(log_dir=str(log_dir))
                 except Exception as exc:  # pragma: no cover - defensive
@@ -1344,7 +1373,11 @@ class PotentialTrainer:
                 )
                 self._summary_writer = None
             else:
-                log_dir = self.output_dir / "tensorboard"
+                log_dir = _resolve_tensorboard_dir(
+                    self.output_dir,
+                    self.config.tensorboard_dir,
+                    self.config.resume_from is not None,
+                )
                 try:
                     self._summary_writer = SummaryWriter(log_dir=str(log_dir))
                 except Exception as exc:  # pragma: no cover - defensive

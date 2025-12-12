@@ -191,9 +191,10 @@ in addition to the default PyTorch initialisers.
 Use `--log-every-steps` to control how often batch-level metrics are printed to
 the terminal (the default is every 100 steps). Every epoch summary reports its
 elapsed time and both the training and validation losses. Runs also emit
-TensorBoard event files under ``<output>/tensorboard`` capturing the train/val
-loss curves, learning-rate schedule, and other tracked scalars; pass
-`--no-tensorboard` if you prefer to skip event generation.
+TensorBoard event files under ``<output>/tensorboard/<timestamp>`` capturing the
+train/val loss curves, learning-rate schedule, and other tracked scalars;
+provide an explicit ``--tensorboard-dir`` to append to a previous run when
+resuming, or pass `--no-tensorboard` if you prefer to skip event generation.
 
 ### Potential training with configuration files
 
@@ -337,8 +338,9 @@ The potential workflow mirrors the logging controls offered by the baseline
 trainer. Adjust batch-level verbosity with `--log-every-steps` and disable
 TensorBoard event generation via `--no-tensorboard` when desired. Each run
 writes train/validation energy and force loss curves, along with the learning
-rate and epoch durations, to ``<output>/tensorboard`` for convenient monitoring
-in TensorBoard.
+rate and epoch durations, to ``<output>/tensorboard/<timestamp>`` for convenient
+monitoring in TensorBoard. Supply `--tensorboard-dir` to continue a previous log
+directory when resuming training.
 
 Potential experiments honour the same `seed` and `parameter_init` options so
 multi-rank training stays reproducible and model initialisation is fully
