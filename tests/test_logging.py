@@ -21,3 +21,12 @@ def test_configure_logging_resume_uses_latest_timestamped_log(tmp_path):
     archived = sorted(tmp_path.glob("training-*.log"))
     assert len(archived) == 2
     assert archived[-1].read_text().startswith("append here")
+
+
+def test_configure_logging_skips_file_on_non_main_rank(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setenv("RANK", "1")
+
+    configure_logging(tmp_path)
+
+    assert list(tmp_path.glob("training-*.log")) == []
