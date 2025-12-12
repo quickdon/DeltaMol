@@ -54,3 +54,29 @@ def test_cli_parses_potential_model_overrides():
     assert args.model_name == "se3"
     assert args.se3_layers == 2
     assert args.predict_forces is True
+
+
+def test_cli_parses_gemnet_options():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "train-potential",
+            "dataset.npz",
+            "--config",
+            "experiment.yaml",
+            "--model",
+            "gemnet",
+            "--gemnet-num-blocks",
+            "2",
+            "--gemnet-num-radial",
+            "8",
+            "--gemnet-num-spherical",
+            "6",
+        ]
+    )
+
+    assert callable(args.func)
+    assert args.model_name == "gemnet"
+    assert args.gemnet_num_blocks == 2
+    assert args.gemnet_num_radial == 8
+    assert args.gemnet_num_spherical == 6

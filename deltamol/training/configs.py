@@ -43,6 +43,7 @@ class ModelConfig:
         "se3",
         "schnet",
         "dimenet",
+        "gemnet",
     ] = "transformer"
     hidden_dim: int = 128
     gcn_layers: int = 2
@@ -69,6 +70,9 @@ class ModelConfig:
     dimenet_num_blocks: int = 3
     dimenet_num_radial: int = 6
     dimenet_num_spherical: int = 7
+    gemnet_num_blocks: int = 3
+    gemnet_num_radial: int = 6
+    gemnet_num_spherical: int = 4
 
 
 @dataclass

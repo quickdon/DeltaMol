@@ -26,8 +26,9 @@ surfaces by embracing three core ideas:
 4. Train the hybrid SOAP-guided potential or the SE(3)-Transformer variant
    using the cached descriptors and the `train-potential` command. The
    architecture can be selected in the experiment YAML via `model.name` or
-   overridden on the CLI with `--model se3` or `--model hybrid` while keeping
-   the same residual learning flow as the baseline.
+   overridden on the CLI with `--model se3`, `--model gemnet`, or
+   `--model hybrid` while keeping the same residual learning flow as the
+   baseline.
 
 ## Evaluation and testing
 
@@ -88,6 +89,26 @@ dimenet`` on the CLI. Key hyperparameters:
 Like SchNet, DimeNet supports optional analytic force prediction via gradients of
 the summed energy with respect to atomic coordinates; enable it with
 ``predict_forces: true`` when fitting energies and forces jointly.
+
+### GemNet potential architecture
+
+DeltaMol ships a streamlined GemNet-style architecture inspired by Gasteiger
+et al. (NeurIPS 2021) and the reference TensorFlow implementation at
+`TUM-DAML/gemnet_tf <https://github.com/TUM-DAML/gemnet_tf>`_. Activate it with
+``model.name: gemnet`` in the experiment YAML or ``--model gemnet`` on the CLI.
+Key hyperparameters include:
+
+* ``gemnet_num_blocks`` – number of directional message passing stages stacked
+  sequentially (default 3).
+* ``gemnet_num_radial`` – Gaussian radial basis size for pairwise distance
+  expansion up to ``model.cutoff`` (default 6).
+* ``gemnet_num_spherical`` – number of directional projections used to encode
+  edge orientations (default 4).
+
+The GemNet implementation mirrors the SchNet and DimeNet interfaces: it honours
+the shared neighbourhood cutoff, supports optional analytic force prediction via
+``predict_forces: true``, and trains in residual or absolute modes depending on
+the chosen baseline settings.
 
 The CLI also exposes dedicated prediction commands for evaluating existing
 checkpoints. ``deltamol predict-baseline <dataset> <checkpoint>`` loads a linear

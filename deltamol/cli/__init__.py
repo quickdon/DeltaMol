@@ -31,6 +31,8 @@ from ..models import (
     HybridPotentialConfig,
     DimeNetConfig,
     DimeNetPotential,
+    GemNetConfig,
+    GemNetPotential,
     LinearAtomicBaseline,
     LinearBaselineConfig,
     SchNetConfig,
@@ -137,6 +139,17 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
             predict_forces=model_cfg.predict_forces,
         )
         return DimeNetPotential(config)
+    if name == "gemnet":
+        config = GemNetConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_blocks=model_cfg.gemnet_num_blocks,
+            num_radial=model_cfg.gemnet_num_radial,
+            num_spherical=model_cfg.gemnet_num_spherical,
+            cutoff=model_cfg.cutoff,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return GemNetPotential(config)
     if name == "gcn":
         config = HybridPotentialConfig(
             species=species_tuple,
@@ -591,6 +604,12 @@ def _train_potential(args: argparse.Namespace) -> None:
         model_overrides["dimenet_num_radial"] = args.dimenet_num_radial
     if args.dimenet_num_spherical is not None:
         model_overrides["dimenet_num_spherical"] = args.dimenet_num_spherical
+    if args.gemnet_num_blocks is not None:
+        model_overrides["gemnet_num_blocks"] = args.gemnet_num_blocks
+    if args.gemnet_num_radial is not None:
+        model_overrides["gemnet_num_radial"] = args.gemnet_num_radial
+    if args.gemnet_num_spherical is not None:
+        model_overrides["gemnet_num_spherical"] = args.gemnet_num_spherical
     if args.residual_mode is not None:
         experiment = replace(experiment, model=replace(experiment.model, residual_mode=args.residual_mode))
     if model_overrides:
@@ -1054,7 +1073,17 @@ def build_parser() -> argparse.ArgumentParser:
     potential_parser.add_argument(
         "--model",
         dest="model_name",
-        choices=["transformer", "hybrid", "hybrid-potential", "soap-transformer", "se3", "gcn", "dimenet", "schnet"],
+        choices=[
+            "transformer",
+            "hybrid",
+            "hybrid-potential",
+            "soap-transformer",
+            "se3",
+            "gcn",
+            "dimenet",
+            "schnet",
+            "gemnet",
+        ],
         default=None,
         help="Override the architecture defined in the config (options include transformer, hybrid, and se3)",
     )
@@ -1115,6 +1144,24 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Number of spherical angle basis components for DimeNet",
+    )
+    potential_parser.add_argument(
+        "--gemnet-num-blocks",
+        type=int,
+        default=None,
+        help="Number of directional message passing blocks for GemNet",
+    )
+    potential_parser.add_argument(
+        "--gemnet-num-radial",
+        type=int,
+        default=None,
+        help="Size of the radial distance basis for GemNet edge updates",
+    )
+    potential_parser.add_argument(
+        "--gemnet-num-spherical",
+        type=int,
+        default=None,
+        help="Number of directional projections for GemNet edge features",
     )
     coord_group = potential_parser.add_mutually_exclusive_group()
     coord_group.add_argument(
