@@ -189,7 +189,15 @@ class DimeNetPotential(nn.Module):
         node_embeddings = self.embedding(node_indices)
         center_emb = node_embeddings.unsqueeze(2)
         neighbour_emb = node_embeddings.unsqueeze(1)
-        edge_input = torch.cat([radial, center_emb.expand_as(radial), neighbour_emb.expand_as(radial)], dim=-1)
+
+        # ``radial`` has shape (batch, atoms, neighbours, num_radial) while the
+        # embeddings live in ``hidden_dim``. We only want to broadcast the
+        # spatial axes (center, neighbour) and keep the feature dimensions
+        # independent before concatenation.
+        center_expanded = center_emb.expand(-1, -1, radial.size(2), -1)
+        neighbour_expanded = neighbour_emb.expand(-1, radial.size(1), -1, -1)
+
+        edge_input = torch.cat([radial, center_expanded, neighbour_expanded], dim=-1)
         edge_features = self.edge_init(edge_input) * adjacency_mask.unsqueeze(-1)
 
         displacement = positions.unsqueeze(2) - positions.unsqueeze(1)
