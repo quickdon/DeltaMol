@@ -45,6 +45,7 @@ class ModelConfig:
         "dimenet",
         "gemnet",
         "equiformer_v2",
+        "tensornet",
     ] = "transformer"
     hidden_dim: int = 128
     gcn_layers: int = 2
@@ -74,6 +75,9 @@ class ModelConfig:
     gemnet_num_blocks: int = 3
     gemnet_num_radial: int = 6
     gemnet_num_spherical: int = 4
+    tensornet_num_layers: int = 3
+    tensornet_num_radial: int = 16
+    tensornet_direction_dim: int = 32
 
 
 @dataclass

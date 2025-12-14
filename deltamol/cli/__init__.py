@@ -35,6 +35,8 @@ from ..models import (
     EquiformerV2Potential,
     GemNetConfig,
     GemNetPotential,
+    TensorNetConfig,
+    TensorNetPotential,
     LinearAtomicBaseline,
     LinearBaselineConfig,
     SchNetConfig,
@@ -164,6 +166,17 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
             predict_forces=model_cfg.predict_forces,
         )
         return GemNetPotential(config)
+    if name == "tensornet":
+        config = TensorNetConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_layers=model_cfg.tensornet_num_layers,
+            num_radial=model_cfg.tensornet_num_radial,
+            direction_dim=model_cfg.tensornet_direction_dim,
+            cutoff=model_cfg.cutoff,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return TensorNetPotential(config)
     if name == "gcn":
         config = HybridPotentialConfig(
             species=species_tuple,
@@ -624,6 +637,12 @@ def _train_potential(args: argparse.Namespace) -> None:
         model_overrides["gemnet_num_radial"] = args.gemnet_num_radial
     if args.gemnet_num_spherical is not None:
         model_overrides["gemnet_num_spherical"] = args.gemnet_num_spherical
+    if args.tensornet_num_layers is not None:
+        model_overrides["tensornet_num_layers"] = args.tensornet_num_layers
+    if args.tensornet_num_radial is not None:
+        model_overrides["tensornet_num_radial"] = args.tensornet_num_radial
+    if args.tensornet_direction_dim is not None:
+        model_overrides["tensornet_direction_dim"] = args.tensornet_direction_dim
     if args.residual_mode is not None:
         experiment = replace(experiment, model=replace(experiment.model, residual_mode=args.residual_mode))
     if model_overrides:
@@ -1097,6 +1116,7 @@ def build_parser() -> argparse.ArgumentParser:
             "dimenet",
             "schnet",
             "gemnet",
+            "tensornet",
             "equiformer_v2",
             "equiformer",
             "equiformer-v2",
@@ -1179,6 +1199,24 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Number of directional projections for GemNet edge features",
+    )
+    potential_parser.add_argument(
+        "--tensornet-num-layers",
+        type=int,
+        default=None,
+        help="Number of TensorNet interaction blocks",
+    )
+    potential_parser.add_argument(
+        "--tensornet-num-radial",
+        type=int,
+        default=None,
+        help="Size of the Gaussian radial basis for TensorNet",
+    )
+    potential_parser.add_argument(
+        "--tensornet-direction-dim",
+        type=int,
+        default=None,
+        help="Hidden dimension used to project displacement vectors in TensorNet",
     )
     coord_group = potential_parser.add_mutually_exclusive_group()
     coord_group.add_argument(

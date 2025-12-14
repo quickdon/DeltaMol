@@ -110,6 +110,26 @@ the shared neighbourhood cutoff, supports optional analytic force prediction via
 ``predict_forces: true``, and trains in residual or absolute modes depending on
 the chosen baseline settings.
 
+### TensorNet potential architecture
+
+DeltaMol now exposes a TensorNet-inspired potential adapted from the PyTorch
+implementation in `torchmd/torchmd-net <https://github.com/torchmd/torchmd-net>`_.
+Select it with ``model.name: tensornet`` in an experiment YAML or ``--model
+tensornet`` on the CLI. Core hyperparameters include (and can be overridden via
+the matching ``--tensornet-*`` flags):
+
+* ``tensornet_num_layers`` – number of interaction blocks that mix scalar and
+  orientation-aware features (default 3).
+* ``tensornet_num_radial`` – Gaussian radial basis size for pairwise distances
+  up to ``model.cutoff`` (default 16).
+* ``tensornet_direction_dim`` – hidden size for projecting displacement vectors
+  before combining them with radial filters (default 32).
+
+TensorNet follows the same interface as the other potentials: it respects
+dataset adjacency when provided, applies the shared cutoff for neighbour
+selection, and supports optional analytic force prediction controlled by
+``predict_forces``.
+
 ### EquiformerV2 potential architecture
 
 DeltaMol now ships a compact EquiformerV2-style model for equivariant attention

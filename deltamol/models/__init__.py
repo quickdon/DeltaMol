@@ -6,6 +6,7 @@ from .equiformer_v2 import EquiformerV2Config, EquiformerV2Potential
 from .gemnet import GemNetConfig, GemNetPotential
 from .hybrid import HybridPotential, HybridPotentialConfig
 from .se3 import SE3TransformerConfig, SE3TransformerPotential
+from .tensornet import TensorNetConfig, TensorNetPotential
 from .schnet import SchNetConfig, SchNetPotential
 from .potential import PotentialOutput
 
@@ -21,6 +22,8 @@ __all__ = [
     "EquiformerV2Potential",
     "GemNetConfig",
     "GemNetPotential",
+    "TensorNetConfig",
+    "TensorNetPotential",
     "DimeNetConfig",
     "DimeNetPotential",
     "SE3TransformerConfig",
