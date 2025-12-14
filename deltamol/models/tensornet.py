@@ -112,6 +112,7 @@ class TensorNetPotential(nn.Module):
             nn.SiLU(),
             nn.Linear(config.hidden_dim, 1),
         )
+        self._grad_layout_hook_handle: torch.utils.hooks.RemovableHandle | None = None
         self._register_grad_layout_hooks()
 
     def _register_grad_layout_hooks(self) -> None:
@@ -135,7 +136,21 @@ class TensorNetPotential(nn.Module):
                 return grad.contiguous()
             return grad
 
-        readout_weight.register_hook(_fix_layout)
+        if self._grad_layout_hook_handle is not None:
+            self._grad_layout_hook_handle.remove()
+        self._grad_layout_hook_handle = readout_weight.register_hook(_fix_layout)
+
+    def refresh_grad_layout_hooks(self) -> None:
+        """Re-install grad layout hooks after wrapping in DDP.
+
+        DistributedDataParallel registers its own autograd hooks after model
+        construction. Hooks run in *reverse* registration order, so a hook that
+        should sanitize gradients must be registered *after* DDP to run first.
+        Calling this method re-registers the layout hook to the end of the hook
+        list, ensuring it executes before DDP's bucket-handling hooks.
+        """
+
+        self._register_grad_layout_hooks()
 
     def _build_masks(
         self,

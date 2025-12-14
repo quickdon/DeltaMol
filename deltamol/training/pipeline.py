@@ -535,6 +535,9 @@ class Trainer:
         if self.distributed.enabled:
             ddp_kwargs = _build_ddp_kwargs(config.distributed, self.device)
             self.ddp_model = nn.parallel.DistributedDataParallel(self.model, **ddp_kwargs)
+            refresh_hooks = getattr(self.model, "refresh_grad_layout_hooks", None)
+            if callable(refresh_hooks):
+                refresh_hooks()
             param_source = self.ddp_model.parameters()
         else:
             self.ddp_model = None
@@ -1378,6 +1381,9 @@ class PotentialTrainer:
             wrapper = _PotentialDDPWrapper(self.model, self.baseline)
             ddp_kwargs = _build_ddp_kwargs(config.distributed, self.device)
             self.ddp_model = nn.parallel.DistributedDataParallel(wrapper, **ddp_kwargs)
+            refresh_hooks = getattr(self.model, "refresh_grad_layout_hooks", None)
+            if callable(refresh_hooks):
+                refresh_hooks()
             param_source = self.ddp_model.parameters()
         else:
             self.ddp_model = None
