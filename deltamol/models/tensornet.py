@@ -143,15 +143,18 @@ class TensorNetPotential(nn.Module):
         mask_bool = mask.bool()
         mask_float = mask_bool.float()
 
-        if self.config.predict_forces and not positions.requires_grad:
+        needs_force_grad = self.config.predict_forces
+
+        if needs_force_grad and not positions.requires_grad:
             positions = positions.clone().detach().requires_grad_(True)
 
-        grad_context = nullcontext()
-        if self.config.predict_forces and not torch.is_grad_enabled():
-            grad_context = torch.enable_grad()
+        # Force-enable gradient tracking when forces are requested, even if the
+        # caller wrapped the forward pass in ``torch.no_grad``. This ensures the
+        # energy tensor retains a grad_fn for the subsequent autograd call.
+        grad_context = torch.set_grad_enabled(True if needs_force_grad else torch.is_grad_enabled())
 
-        with grad_context:
-            displacement, distances, edge_mask = self._build_masks(positions, mask_bool, adjacency)
+        def _compute_energy(current_positions: torch.Tensor) -> torch.Tensor:
+            displacement, distances, edge_mask = self._build_masks(current_positions, mask_bool, adjacency)
             rbf = self.radial_basis(distances)
             rbf = rbf * edge_mask.unsqueeze(-1)
 
@@ -162,19 +165,33 @@ class TensorNetPotential(nn.Module):
                 features = block(features, rbf, displacement, edge_mask)
 
             per_atom = self.readout(features).squeeze(-1)
-            energy = (per_atom * mask_float).sum(dim=1)
+            return (per_atom * mask_float).sum(dim=1)
+
+        with grad_context:
+            energy = _compute_energy(positions)
+
+        if needs_force_grad and not energy.requires_grad:
+            with torch.enable_grad():
+                positions = positions.clone().detach().requires_grad_(True)
+                energy = _compute_energy(positions)
 
         forces = None
-        if self.config.predict_forces:
-            grads = torch.autograd.grad(
-                energy.sum(),
-                positions,
-                create_graph=self.training,
-                retain_graph=self.training,
-                allow_unused=True,
-            )[0]
-            if grads is None:
+        if needs_force_grad:
+            if not torch.is_grad_enabled():
+                forces = torch.zeros_like(positions) * mask_float.unsqueeze(-1)
+                return PotentialOutput(energy=energy.detach(), forces=forces)
+            if (not energy.requires_grad) or (energy.grad_fn is None):
                 grads = torch.zeros_like(positions)
+            else:
+                grads = torch.autograd.grad(
+                    energy.sum(),
+                    positions,
+                    create_graph=self.training,
+                    retain_graph=self.training,
+                    allow_unused=True,
+                )[0]
+                if grads is None:
+                    grads = torch.zeros_like(positions)
             forces = -grads
             forces = forces * mask_float.unsqueeze(-1)
 
