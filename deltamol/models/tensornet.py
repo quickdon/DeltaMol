@@ -166,7 +166,9 @@ class TensorNetPotential(nn.Module):
 
         forces = None
         if self.config.predict_forces:
-            forces = -torch.autograd.grad(energy.sum(), positions, create_graph=False, retain_graph=False)[0]
+            forces = -torch.autograd.grad(
+                energy.sum(), positions, create_graph=self.training, retain_graph=False
+            )[0]
             forces = forces * mask_float.unsqueeze(-1)
 
         return PotentialOutput(energy=energy, forces=forces)
