@@ -283,9 +283,9 @@ configuration:
 
 Architectures can be swapped without editing the YAML by passing
 `--model transformer`, `--model hybrid`, `--model schnet`, `--model dimenet`,
-`--model gemnet`, or `--model se3` on the CLI; the flag respects the same
-residual training flow used by the baseline so SE(3) Transformer runs
-participate in delta-learning
+`--model gemnet`, `--model tensornet`, or `--model se3` on the CLI; the flag
+respects the same residual training flow used by the baseline so SE(3)
+Transformer runs participate in delta-learning
 alongside the hybrid potential. Additional overrides for depth (`--transformer-layers`,
 `--gcn-layers`, `--se3-layers`), width (`--hidden-dim`, `--ffn-dim`,
 `--num-heads`), and SE(3) distance embeddings (`--se3-distance-embedding`) keep
@@ -344,6 +344,26 @@ edge-focused hyperparameters via:
 GemNet runs mirror the SchNet and DimeNet interfaces: they honour the shared
 `cutoff` value, optional analytic force prediction via `predict_forces`, and
 the same residual training flow when paired with a linear baseline.
+
+The TensorNet option adapts the TensorNet architecture from
+[`torchmd/torchmd-net`](https://github.com/torchmd/torchmd-net) with
+orientation-aware updates that mix scalar and directional channels. Choose it
+with `model.name: tensornet` or `--model tensornet` and tune its dedicated
+parameters in the YAML or via CLI overrides:
+
+* `--tensornet-num-layers` (`model.tensornet_num_layers`) – number of
+  interaction blocks stacked to exchange radial and directional information
+  (default 3).
+* `--tensornet-num-radial` (`model.tensornet_num_radial`) – Gaussian radial
+  basis size for pairwise distance expansion up to the shared `cutoff` (default
+  16).
+* `--tensornet-direction-dim` (`model.tensornet_direction_dim`) – hidden size
+  used when projecting displacement vectors before mixing them with the radial
+  filters (default 32).
+
+TensorNet follows the same adjacency-aware cutoff handling and supports direct
+force supervision through `predict_forces`, producing analytic forces from the
+predicted energy when enabled.
 
 Dataset sections inside the experiment configuration accept the same `format`
 and `key_map` fields exposed on the CLI. Each `key_map` entry follows the
