@@ -239,6 +239,24 @@ def test_tensornet_forward_pass_runs():
     assert output.forces.shape == (2, 4, 3)
 
 
+def test_tensornet_grad_layout_matches_parameter_stride():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = TensorNetConfig(species=species, hidden_dim=16, num_layers=1, num_radial=4)
+    model = TensorNetPotential(config)
+
+    node_indices = torch.tensor([[1, 2, 3]], dtype=torch.long)
+    positions = torch.randn(1, 3, 3, requires_grad=True)
+    mask = node_indices != 0
+
+    output = model(node_indices, positions, adjacency=None, mask=mask)
+    output.energy.sum().backward()
+
+    readout_weight = model.readout[-1].weight
+    assert readout_weight.grad is not None
+    assert readout_weight.grad.stride() == readout_weight.stride()
+
+
 def test_equiformer_v2_energy_dependent_on_coordinates():
     torch.manual_seed(0)
     species = (1,)
