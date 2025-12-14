@@ -112,6 +112,30 @@ class TensorNetPotential(nn.Module):
             nn.SiLU(),
             nn.Linear(config.hidden_dim, 1),
         )
+        self._register_grad_layout_hooks()
+
+    def _register_grad_layout_hooks(self) -> None:
+        """Make sure gradients keep the parameter memory layout.
+
+        PyTorch DDP expects parameter gradients to match the parameter strides
+        when building communication buckets. The final readout weight has shape
+        ``(1, hidden_dim)`` which can receive expanded gradients with stride
+        ``(1, 1)``, triggering a warning during distributed training. A small
+        hook forces the gradient to be contiguous and therefore aligned with the
+        parameter's stride before DDP buckets it.
+        """
+
+        readout_weight = self.readout[-1].weight
+        target_stride = readout_weight.stride()
+
+        def _fix_layout(grad: torch.Tensor | None) -> torch.Tensor | None:
+            if grad is None:
+                return None
+            if grad.stride() != target_stride:
+                return grad.contiguous()
+            return grad
+
+        readout_weight.register_hook(_fix_layout)
 
     def _build_masks(
         self,
