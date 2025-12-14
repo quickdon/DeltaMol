@@ -257,6 +257,41 @@ def test_tensornet_grad_layout_matches_parameter_stride():
     assert readout_weight.grad.stride() == readout_weight.stride()
 
 
+def test_tensornet_refresh_grad_layout_hooks_reorders_hook_handles():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = TensorNetConfig(species=species, hidden_dim=16, num_layers=1, num_radial=4)
+    model = TensorNetPotential(config)
+
+    first_handle = model._grad_layout_hook_handle
+    model.refresh_grad_layout_hooks()
+    second_handle = model._grad_layout_hook_handle
+
+    assert first_handle is not None
+    assert second_handle is not None
+    assert first_handle is not second_handle
+
+    node_indices = torch.tensor([[1, 2, 3]], dtype=torch.long)
+    positions = torch.randn(1, 3, 3, requires_grad=True)
+    mask = node_indices != 0
+
+    readout_weight = model.readout[-1].weight
+    seen_strides = []
+
+    def ddp_like_hook(grad: torch.Tensor | None) -> torch.Tensor | None:
+        if grad is not None:
+            seen_strides.append(grad.stride())
+        return grad
+
+    readout_weight.register_hook(ddp_like_hook)
+
+    output = model(node_indices, positions, adjacency=None, mask=mask)
+    output.energy.sum().backward()
+
+    assert seen_strides
+    assert seen_strides[0] == readout_weight.stride()
+
+
 def test_equiformer_v2_energy_dependent_on_coordinates():
     torch.manual_seed(0)
     species = (1,)
