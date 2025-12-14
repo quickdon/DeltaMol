@@ -239,6 +239,33 @@ def test_tensornet_forward_pass_runs():
     assert output.forces.shape == (2, 4, 3)
 
 
+def test_tensornet_forces_available_under_no_grad():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = TensorNetConfig(
+        species=species,
+        hidden_dim=32,
+        num_layers=2,
+        num_radial=8,
+        direction_dim=16,
+        cutoff=3.5,
+        predict_forces=True,
+    )
+    model = TensorNetPotential(config)
+    node_indices = torch.tensor([[1, 2, 3, 0]], dtype=torch.long)
+    positions = torch.randn(1, 4, 3)
+    adjacency = torch.ones(1, 4, 4)
+    adjacency[:, torch.arange(4), torch.arange(4)] = 0
+    mask = node_indices != 0
+
+    with torch.no_grad():
+        output = model(node_indices, positions, adjacency, mask)
+
+    assert output.forces is not None
+    assert output.forces.shape == positions.shape
+    assert torch.any(output.forces != 0)
+
+
 def test_tensornet_grad_layout_matches_parameter_stride():
     torch.manual_seed(0)
     species = (1, 6, 8)

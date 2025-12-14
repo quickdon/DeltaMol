@@ -187,11 +187,6 @@ class TensorNetPotential(nn.Module):
         if needs_force_grad and not positions.requires_grad:
             positions = positions.clone().detach().requires_grad_(True)
 
-        # Force-enable gradient tracking when forces are requested, even if the
-        # caller wrapped the forward pass in ``torch.no_grad``. This ensures the
-        # energy tensor retains a grad_fn for the subsequent autograd call.
-        grad_context = torch.set_grad_enabled(True if needs_force_grad else torch.is_grad_enabled())
-
         def _compute_energy(current_positions: torch.Tensor) -> torch.Tensor:
             displacement, distances, edge_mask = self._build_masks(current_positions, mask_bool, adjacency)
             rbf = self.radial_basis(distances)
@@ -206,22 +201,13 @@ class TensorNetPotential(nn.Module):
             per_atom = self.readout(features).squeeze(-1)
             return (per_atom * mask_float).sum(dim=1)
 
-        with grad_context:
-            energy = _compute_energy(positions)
+        forces: torch.Tensor | None = None
 
-        if needs_force_grad and not energy.requires_grad:
-            with torch.enable_grad():
-                positions = positions.clone().detach().requires_grad_(True)
-                energy = _compute_energy(positions)
-
-        forces = None
         if needs_force_grad:
-            if not torch.is_grad_enabled():
-                forces = torch.zeros_like(positions) * mask_float.unsqueeze(-1)
-                return PotentialOutput(energy=energy.detach(), forces=forces)
-            if (not energy.requires_grad) or (energy.grad_fn is None):
-                grads = torch.zeros_like(positions)
-            else:
+            # Ensure gradients are recorded even if the caller wrapped the forward
+            # pass in ``torch.no_grad``.
+            with torch.enable_grad():
+                energy = _compute_energy(positions)
                 grads = torch.autograd.grad(
                     energy.sum(),
                     positions,
@@ -229,10 +215,13 @@ class TensorNetPotential(nn.Module):
                     retain_graph=self.training,
                     allow_unused=True,
                 )[0]
-                if grads is None:
-                    grads = torch.zeros_like(positions)
+            if grads is None:
+                grads = torch.zeros_like(positions)
             forces = -grads
             forces = forces * mask_float.unsqueeze(-1)
+        else:
+            with torch.set_grad_enabled(torch.is_grad_enabled()):
+                energy = _compute_energy(positions)
 
         return PotentialOutput(energy=energy, forces=forces)
 
