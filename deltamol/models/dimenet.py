@@ -10,6 +10,7 @@ interactions when predicting molecular energies and forces.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 
 import torch
 from torch import nn
@@ -178,45 +179,52 @@ class DimeNetPotential(nn.Module):
         if self.config.predict_forces and not positions.requires_grad:
             positions = positions.clone().detach().requires_grad_(True)
 
-        distances, neighbour_mask = _masked_distances(positions, mask_bool)
-        adjacency_mask = neighbour_mask & (adjacency > 0)
+        grad_context = nullcontext()
+        if self.config.predict_forces and not torch.is_grad_enabled():
+            grad_context = torch.enable_grad()
 
-        # Align to (batch, center, neighbour, ...).
-        distances = distances.transpose(1, 2)
-        adjacency_mask = adjacency_mask.transpose(1, 2)
+        with grad_context:
+            distances, neighbour_mask = _masked_distances(positions, mask_bool)
+            adjacency_mask = neighbour_mask & (adjacency > 0)
 
-        radial = self.radial_basis(distances) * adjacency_mask.unsqueeze(-1)
-        node_embeddings = self.embedding(node_indices)
-        center_emb = node_embeddings.unsqueeze(2)
-        neighbour_emb = node_embeddings.unsqueeze(1)
+            # Align to (batch, center, neighbour, ...).
+            distances = distances.transpose(1, 2)
+            adjacency_mask = adjacency_mask.transpose(1, 2)
 
-        # ``radial`` has shape (batch, atoms, neighbours, num_radial) while the
-        # embeddings live in ``hidden_dim``. We only want to broadcast the
-        # spatial axes (center, neighbour) and keep the feature dimensions
-        # independent before concatenation.
-        center_expanded = center_emb.expand(-1, -1, radial.size(2), -1)
-        neighbour_expanded = neighbour_emb.expand(-1, radial.size(1), -1, -1)
+            radial = self.radial_basis(distances) * adjacency_mask.unsqueeze(-1)
+            node_embeddings = self.embedding(node_indices)
+            center_emb = node_embeddings.unsqueeze(2)
+            neighbour_emb = node_embeddings.unsqueeze(1)
 
-        edge_input = torch.cat([radial, center_expanded, neighbour_expanded], dim=-1)
-        edge_features = self.edge_init(edge_input) * adjacency_mask.unsqueeze(-1)
+            # ``radial`` has shape (batch, atoms, neighbours, num_radial) while the
+            # embeddings live in ``hidden_dim``. We only want to broadcast the
+            # spatial axes (center, neighbour) and keep the feature dimensions
+            # independent before concatenation.
+            center_expanded = center_emb.expand(-1, -1, radial.size(2), -1)
+            neighbour_expanded = neighbour_emb.expand(-1, radial.size(1), -1, -1)
 
-        displacement = positions.unsqueeze(2) - positions.unsqueeze(1)
-        displacement = displacement.transpose(1, 2)
-        directions = displacement / (distances.unsqueeze(-1) + 1e-8)
+            edge_input = torch.cat([radial, center_expanded, neighbour_expanded], dim=-1)
+            edge_features = self.edge_init(edge_input) * adjacency_mask.unsqueeze(-1)
 
-        for block in self.blocks:
-            edge_features = block(edge_features, directions, adjacency_mask)
+            displacement = positions.unsqueeze(2) - positions.unsqueeze(1)
+            displacement = displacement.transpose(1, 2)
+            directions = displacement / (distances.unsqueeze(-1) + 1e-8)
 
-        aggregated = edge_features * adjacency_mask.unsqueeze(-1)
-        aggregated = aggregated.sum(dim=2)
-        node_state = self.node_update(torch.cat([node_embeddings, aggregated], dim=-1))
-        per_atom_energy = self.output(node_state).squeeze(-1) * mask_float
-        energy = per_atom_energy.sum(dim=1)
+            for block in self.blocks:
+                edge_features = block(edge_features, directions, adjacency_mask)
 
-        forces = None
-        if self.config.predict_forces:
-            forces = -torch.autograd.grad(energy.sum(), positions, create_graph=self.training)[0]
-            forces = forces * mask_float.unsqueeze(-1)
+            aggregated = edge_features * adjacency_mask.unsqueeze(-1)
+            aggregated = aggregated.sum(dim=2)
+            node_state = self.node_update(torch.cat([node_embeddings, aggregated], dim=-1))
+            per_atom_energy = self.output(node_state).squeeze(-1) * mask_float
+            energy = per_atom_energy.sum(dim=1)
+
+            forces = None
+            if self.config.predict_forces:
+                forces = -torch.autograd.grad(
+                    energy.sum(), positions, create_graph=self.training
+                )[0]
+                forces = forces * mask_float.unsqueeze(-1)
 
         return PotentialOutput(energy=energy, forces=forces)
 
