@@ -18,7 +18,12 @@ from .evaluation.testing import (
     plot_predictions_vs_targets,
     save_predictions_and_targets,
 )
-from .training.pipeline import TrainingConfig, train_baseline
+from .training.pipeline import (
+    TrainingConfig,
+    _load_best_checkpoint_for_testing,
+    _log_test_metrics,
+    train_baseline,
+)
 from .utils import is_main_process
 from .utils.logging import configure_logging
 
@@ -212,6 +217,9 @@ def run_baseline_training(
         config = replace(config, tensorboard_dir=Path(config.tensorboard_dir))
     trainer = train_baseline(formula_vectors, energies, species=species, config=config)
     if test_dataset_tensors is not None:
+        if trainer.distributed.is_main_process():
+            LOGGER.info("Evaluating best baseline checkpoint on test dataset at %s", test_dataset)
+        _load_best_checkpoint_for_testing(trainer)
         test_metrics, predictions, targets = evaluate_baseline_model(
             trainer.model,
             test_dataset_tensors,
@@ -220,9 +228,7 @@ def run_baseline_training(
             device=trainer.device,
         )
         trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
-        LOGGER.info("Baseline test metrics:")
-        for name, value in sorted(test_metrics.items()):
-            LOGGER.info("  %s: %.6f", name, value)
+        _log_test_metrics("Baseline", test_metrics)
         results_path = output_dir / "baseline_test_results.npz"
         try:
             save_predictions_and_targets(predictions, targets, results_path)

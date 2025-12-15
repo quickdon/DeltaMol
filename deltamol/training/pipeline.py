@@ -2132,6 +2132,10 @@ def train_potential_model(
         if test_dataset is not None and len(test_dataset) > 0:
             test_metrics = None
             if trainer.distributed.is_main_process():
+                _emit_info(
+                    "Evaluating best potential checkpoint on held-out test split (%d samples)"
+                    % len(test_dataset)
+                )
                 _load_best_checkpoint_for_testing(trainer)
                 (
                     test_metrics,
