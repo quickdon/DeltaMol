@@ -1278,33 +1278,47 @@ def train_baseline(
             val_loader = None
         trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
         if test_dataset is not None and len(test_dataset) > 0:
-            _load_best_checkpoint_for_testing(trainer)
-            test_metrics, predictions, targets = evaluate_baseline_model(
-                trainer.model,
-                test_dataset,
-                batch_size=config.batch_size,
-                device=trainer.device,
-                num_workers=config.num_workers,
-            )
-            trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
-            _log_test_metrics("Baseline", test_metrics)
-            results_path = config.output_dir / "baseline_test_results.npz"
-            try:
-                save_predictions_and_targets(predictions, targets, results_path)
-                _emit_info(f"Saved baseline test predictions to {results_path}")
-            except Exception:  # pragma: no cover - best effort persistence
-                _emit_info("Failed to save baseline test predictions; continuing without them")
-            plot_path = config.output_dir / "baseline_test_predictions.png"
-            try:
-                plot_predictions_vs_targets(
-                    predictions,
-                    targets,
-                    plot_path,
-                    title="Baseline predictions vs targets (test)",
+            test_metrics = None
+            if trainer.distributed.is_main_process():
+                _load_best_checkpoint_for_testing(trainer)
+                test_metrics, predictions, targets = evaluate_baseline_model(
+                    trainer.model,
+                    test_dataset,
+                    batch_size=config.batch_size,
+                    device=trainer.device,
+                    num_workers=config.num_workers,
                 )
-                _emit_info(f"Saved baseline test scatter plot to {plot_path}")
-            except Exception:  # pragma: no cover - plotting is best-effort
-                _emit_info("Failed to create baseline prediction plot; continuing without it")
+                trainer.history.update(
+                    {f"test/{name}": value for name, value in test_metrics.items()}
+                )
+                _log_test_metrics("Baseline", test_metrics)
+                results_path = config.output_dir / "baseline_test_results.npz"
+                try:
+                    save_predictions_and_targets(predictions, targets, results_path)
+                    _emit_info(f"Saved baseline test predictions to {results_path}")
+                except Exception:  # pragma: no cover - best effort persistence
+                    _emit_info(
+                        "Failed to save baseline test predictions; continuing without them"
+                    )
+                plot_path = config.output_dir / "baseline_test_predictions.png"
+                try:
+                    plot_predictions_vs_targets(
+                        predictions,
+                        targets,
+                        plot_path,
+                        title="Baseline predictions vs targets (test)",
+                    )
+                    _emit_info(f"Saved baseline test scatter plot to {plot_path}")
+                except Exception:  # pragma: no cover - plotting is best-effort
+                    _emit_info(
+                        "Failed to create baseline prediction plot; continuing without it"
+                    )
+            if trainer.distributed.enabled:
+                test_metrics = trainer.distributed.broadcast_object(test_metrics)
+                if test_metrics is not None and not trainer.distributed.is_main_process():
+                    trainer.history.update(
+                        {f"test/{name}": value for name, value in test_metrics.items()}
+                    )
         return trainer
     finally:
         destroy_process_group(trainer.distributed)
@@ -2116,52 +2130,68 @@ def train_potential_model(
             val_loader = None
         trainer.train(train_loader, val_loader=val_loader, train_sampler=train_sampler)
         if test_dataset is not None and len(test_dataset) > 0:
-            _load_best_checkpoint_for_testing(trainer)
-            (
-                test_metrics,
-                predictions,
-                targets,
-                force_predictions,
-                force_targets,
-            ) = evaluate_potential_model(
-                trainer.model,
-                test_dataset,
-                baseline=baseline,
-                residual_mode=residual_mode,
-                batch_size=config.batch_size,
-                num_workers=config.num_workers,
-                device=trainer.device,
-            )
-            trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
-            _log_test_metrics("Potential", test_metrics)
-            results_path = config.output_dir / "potential_test_results.npz"
-            try:
-                save_predictions_and_targets(predictions, targets, results_path)
-                _emit_info(f"Saved potential test predictions to {results_path}")
-            except Exception:  # pragma: no cover - best effort persistence
-                _emit_info("Failed to save potential test predictions; continuing without them")
-            if force_predictions is not None and force_targets is not None:
-                force_results_path = config.output_dir / "potential_test_forces.npz"
-                try:
-                    save_force_predictions_and_targets(
-                        force_predictions, force_targets, force_results_path
-                    )
-                    _emit_info(f"Saved potential test force predictions to {force_results_path}")
-                except Exception:  # pragma: no cover - best effort persistence
-                    _emit_info(
-                        "Failed to save potential test force predictions; continuing without them"
-                    )
-            plot_path = config.output_dir / "potential_test_predictions.png"
-            try:
-                plot_predictions_vs_targets(
+            test_metrics = None
+            if trainer.distributed.is_main_process():
+                _load_best_checkpoint_for_testing(trainer)
+                (
+                    test_metrics,
                     predictions,
                     targets,
-                    plot_path,
-                    title="Potential predictions vs targets (test)",
+                    force_predictions,
+                    force_targets,
+                ) = evaluate_potential_model(
+                    trainer.model,
+                    test_dataset,
+                    baseline=baseline,
+                    residual_mode=residual_mode,
+                    batch_size=config.batch_size,
+                    num_workers=config.num_workers,
+                    device=trainer.device,
                 )
-                _emit_info(f"Saved potential test scatter plot to {plot_path}")
-            except Exception:  # pragma: no cover - plotting is best-effort
-                _emit_info("Failed to create potential prediction plot; continuing without it")
+                trainer.history.update(
+                    {f"test/{name}": value for name, value in test_metrics.items()}
+                )
+                _log_test_metrics("Potential", test_metrics)
+                results_path = config.output_dir / "potential_test_results.npz"
+                try:
+                    save_predictions_and_targets(predictions, targets, results_path)
+                    _emit_info(f"Saved potential test predictions to {results_path}")
+                except Exception:  # pragma: no cover - best effort persistence
+                    _emit_info(
+                        "Failed to save potential test predictions; continuing without them"
+                    )
+                if force_predictions is not None and force_targets is not None:
+                    force_results_path = config.output_dir / "potential_test_forces.npz"
+                    try:
+                        save_force_predictions_and_targets(
+                            force_predictions, force_targets, force_results_path
+                        )
+                        _emit_info(
+                            f"Saved potential test force predictions to {force_results_path}"
+                        )
+                    except Exception:  # pragma: no cover - best effort persistence
+                        _emit_info(
+                            "Failed to save potential test force predictions; continuing without them"
+                        )
+                plot_path = config.output_dir / "potential_test_predictions.png"
+                try:
+                    plot_predictions_vs_targets(
+                        predictions,
+                        targets,
+                        plot_path,
+                        title="Potential predictions vs targets (test)",
+                    )
+                    _emit_info(f"Saved potential test scatter plot to {plot_path}")
+                except Exception:  # pragma: no cover - plotting is best-effort
+                    _emit_info(
+                        "Failed to create potential prediction plot; continuing without it"
+                    )
+            if trainer.distributed.enabled:
+                test_metrics = trainer.distributed.broadcast_object(test_metrics)
+                if test_metrics is not None and not trainer.distributed.is_main_process():
+                    trainer.history.update(
+                        {f"test/{name}": value for name, value in test_metrics.items()}
+                    )
         return trainer
     finally:
         destroy_process_group(trainer.distributed)
