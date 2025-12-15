@@ -55,7 +55,11 @@ from ..evaluation.testing import (
 )
 from ..training.configs import BaselineConfig, ModelConfig, PotentialExperimentConfig
 from ..training.datasets import MolecularGraphDataset
-from ..training.pipeline import TrainingConfig, train_potential_model
+from ..training.pipeline import (
+    TrainingConfig,
+    _load_best_checkpoint_for_testing,
+    train_potential_model,
+)
 from ..utils import is_main_process
 from ..utils.logging import configure_logging
 
@@ -691,6 +695,13 @@ def _train_potential(args: argparse.Namespace) -> None:
         force_predictions = None
         force_targets = None
         if not trainer.distributed.enabled or trainer.distributed.is_main_process():
+            if is_main_process():
+                LOGGER.info(
+                    "Evaluating best potential checkpoint on test dataset at %s (%d samples)",
+                    test_dataset_path,
+                    len(test_graph_dataset),
+                )
+            _load_best_checkpoint_for_testing(trainer)
             (
                 test_metrics,
                 predictions,
