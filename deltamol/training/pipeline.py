@@ -115,10 +115,29 @@ def _load_best_checkpoint_for_testing(trainer: "Trainer | PotentialTrainer") -> 
     should_load = not is_distributed or distributed.is_main_process()
     state = None
 
-    if should_load and best_path.exists():
+    load_errors = []
+
+    def _try_load(map_location):
         try:
-            state = torch.load(best_path, map_location=trainer.device)
-        except Exception:  # pragma: no cover - defensive during best-effort load
+            return torch.load(best_path, map_location=map_location, weights_only=False)
+        except TypeError:
+            # Older torch versions may not support ``weights_only``; retry without it.
+            try:
+                return torch.load(best_path, map_location=map_location)
+            except Exception as exc:  # pragma: no cover - defensive during best-effort load
+                load_errors.append(str(exc))
+                return None
+        except Exception as exc:  # pragma: no cover - defensive during best-effort load
+            load_errors.append(str(exc))
+            return None
+
+    if should_load and best_path.exists():
+        state = _try_load(trainer.device)
+        if state is None and is_distributed:
+            # Fallback to CPU loading to handle checkpoints saved with device-specific
+            # state (e.g., for resume support) before broadcasting to other ranks.
+            state = _try_load("cpu")
+        if state is None and load_errors:
             _emit_info(
                 f"Failed to load best checkpoint at {best_path}; using current model for testing"
             )
