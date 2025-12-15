@@ -707,6 +707,9 @@ def _train_potential(args: argparse.Namespace) -> None:
                 device=trainer.device,
             )
             trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+            LOGGER.info("Potential test metrics:")
+            for name, value in sorted(test_metrics.items()):
+                LOGGER.info("  %s: %.6f", name, value)
             results_path = training_cfg.output_dir / "potential_test_results.npz"
             try:
                 save_predictions_and_targets(predictions, targets, results_path)
