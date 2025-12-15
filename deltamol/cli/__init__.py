@@ -685,54 +685,67 @@ def _train_potential(args: argparse.Namespace) -> None:
         residual_mode=experiment.model.residual_mode,
     )
     if test_graph_dataset is not None:
-        (
-            test_metrics,
-            predictions,
-            targets,
-            force_predictions,
-            force_targets,
-        ) = evaluate_potential_model(
-            trainer.model,
-            test_graph_dataset,
-            baseline=baseline,
-            residual_mode=experiment.model.residual_mode,
-            batch_size=training_cfg.batch_size,
-            num_workers=training_cfg.num_workers,
-            device=trainer.device,
-        )
-        trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
-        results_path = training_cfg.output_dir / "potential_test_results.npz"
-        try:
-            save_predictions_and_targets(predictions, targets, results_path)
-            if is_main_process():
-                LOGGER.info("Saved potential test predictions to %s", results_path)
-        except Exception as exc:  # pragma: no cover - best effort persistence
-            if is_main_process():
-                LOGGER.warning("Failed to save potential test predictions: %s", exc)
-        if force_predictions is not None and force_targets is not None:
-            force_results_path = training_cfg.output_dir / "potential_test_forces.npz"
-            try:
-                save_force_predictions_and_targets(
-                    force_predictions, force_targets, force_results_path
-                )
-                if is_main_process():
-                    LOGGER.info("Saved potential test force predictions to %s", force_results_path)
-            except Exception as exc:  # pragma: no cover - best effort persistence
-                if is_main_process():
-                    LOGGER.warning("Failed to save potential test force predictions: %s", exc)
-        plot_path = training_cfg.output_dir / "potential_test_predictions.png"
-        try:
-            plot_predictions_vs_targets(
+        test_metrics = None
+        predictions = None
+        targets = None
+        force_predictions = None
+        force_targets = None
+        if not trainer.distributed.enabled or trainer.distributed.is_main_process():
+            (
+                test_metrics,
                 predictions,
                 targets,
-                plot_path,
-                title="Potential predictions vs targets (test)",
+                force_predictions,
+                force_targets,
+            ) = evaluate_potential_model(
+                trainer.model,
+                test_graph_dataset,
+                baseline=baseline,
+                residual_mode=experiment.model.residual_mode,
+                batch_size=training_cfg.batch_size,
+                num_workers=training_cfg.num_workers,
+                device=trainer.device,
             )
-            if is_main_process():
-                LOGGER.info("Saved potential test scatter plot to %s", plot_path)
-        except Exception as exc:  # pragma: no cover - plotting best effort
-            if is_main_process():
-                LOGGER.warning("Failed to save potential test plot: %s", exc)
+            trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
+            results_path = training_cfg.output_dir / "potential_test_results.npz"
+            try:
+                save_predictions_and_targets(predictions, targets, results_path)
+                if is_main_process():
+                    LOGGER.info("Saved potential test predictions to %s", results_path)
+            except Exception as exc:  # pragma: no cover - best effort persistence
+                if is_main_process():
+                    LOGGER.warning("Failed to save potential test predictions: %s", exc)
+            if force_predictions is not None and force_targets is not None:
+                force_results_path = training_cfg.output_dir / "potential_test_forces.npz"
+                try:
+                    save_force_predictions_and_targets(
+                        force_predictions, force_targets, force_results_path
+                    )
+                    if is_main_process():
+                        LOGGER.info("Saved potential test force predictions to %s", force_results_path)
+                except Exception as exc:  # pragma: no cover - best effort persistence
+                    if is_main_process():
+                        LOGGER.warning("Failed to save potential test force predictions: %s", exc)
+            plot_path = training_cfg.output_dir / "potential_test_predictions.png"
+            try:
+                plot_predictions_vs_targets(
+                    predictions,
+                    targets,
+                    plot_path,
+                    title="Potential predictions vs targets (test)",
+                )
+                if is_main_process():
+                    LOGGER.info("Saved potential test scatter plot to %s", plot_path)
+            except Exception as exc:  # pragma: no cover - plotting best effort
+                if is_main_process():
+                    LOGGER.warning("Failed to save potential test plot: %s", exc)
+        if trainer.distributed.enabled:
+            test_metrics = trainer.distributed.broadcast_object(test_metrics)
+            if (
+                test_metrics is not None
+                and not trainer.distributed.is_main_process()
+            ):
+                trainer.history.update({f"test/{name}": value for name, value in test_metrics.items()})
     if trainer.distributed.is_main_process():
         checkpoint_path = training_cfg.output_dir / "potential.pt"
         best_path = trainer.best_checkpoint_path
