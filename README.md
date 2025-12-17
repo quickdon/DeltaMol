@@ -118,13 +118,19 @@ information remains available via the dataset metadata and the forces field can
 be omitted when a source dataset only provides energies. Files stored as NPZ,
 NPY, JSON, YAML, or Torch checkpoints are recognised automatically based on the
 extension, and the CLI exposes `--dataset-format` to override auto-detection
-when necessary. The loader understands MD-style `.npz` archives where a single
+when necessary. When pointing to a directory that contains extensionless files,
+specify `--dataset-format` so the loader knows which reader to use. The loader
+understands MD-style `.npz` archives where a single
 atomic-number array or per-atom force frame is shared across a trajectory; the
 array is broadcast across all coordinate frames so you can load MD trajectories
 without reshaping them. Dataset paths can point to either a single file, a
 directory of supported files, or a space-separated list of paths; all matching
 datasets are loaded and concatenated to simplify training across multiple
-molecules at once. If a dataset uses different field names you can map them to
+molecules at once. When merging several datasets, optional fields must be
+consistent across all inputs: either every dataset provides energies (and
+forces) or the field should be absent everywhere. Molecules with different atom
+counts remain supported because per-geometry forces are stored as object arrays
+before batching. If a dataset uses different field names you can map them to
 the canonical keys directly on the command line:
 
 ```bash

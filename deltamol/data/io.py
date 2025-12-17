@@ -280,11 +280,22 @@ def _concat_datasets(datasets: Sequence[MolecularDataset]) -> MolecularDataset:
     forces = None
     metadata_entries = []
     if any(ds.energies is not None for ds in datasets):
-        energies_list = [ds.energies for ds in datasets if ds.energies is not None]
+        if not all(ds.energies is not None for ds in datasets):
+            raise ValueError("Cannot concatenate datasets when some are missing energies")
+        energies_list = [np.asarray(ds.energies, dtype=float) for ds in datasets]
         energies = np.concatenate(energies_list, axis=0)
     if any(ds.forces is not None for ds in datasets):
-        forces_list = [ds.forces for ds in datasets if ds.forces is not None]
-        forces = np.concatenate(forces_list, axis=0)
+        if not all(ds.forces is not None for ds in datasets):
+            raise ValueError("Cannot concatenate datasets when some are missing forces")
+        force_entries = []
+        for ds in datasets:
+            assert ds.forces is not None  # for type checkers
+            forces_array = np.asarray(ds.forces, dtype=object)
+            if forces_array.ndim == 2 and forces_array.shape[-1] == 3:
+                forces_array = np.expand_dims(forces_array, 0)
+            for entry in forces_array:
+                force_entries.append(np.asarray(entry, dtype=float))
+        forces = np.array(force_entries, dtype=object)
     for ds in datasets:
         if ds.metadata is not None:
             metadata_entries.append(ds.metadata)
