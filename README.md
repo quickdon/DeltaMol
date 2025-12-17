@@ -202,12 +202,17 @@ The `train-potential` subcommand consumes a structured YAML file that describes
 dataset preprocessing, model architecture, and training parameters. Only the
 most important options such as the dataset path and output directory need to be
 specified on the CLI; all other values live alongside the experiment
-definition.
+definition. The `dataset.path` entry accepts either a single file/directory or
+an explicit list of paths, making it easy to point at multiple MD trajectory
+archives at once. All referenced datasets are concatenated before applying the
+train/validation/test split so each source contributes to every stage.
 
 ```yaml
 # configs/potential.yaml
 dataset:
-  path: datasets/DFT_uniques.npz
+  path:
+    - datasets/DFT_uniques.npz
+    - datasets/relaxed_structures
   format: npz
   cutoff: 6.0
   dtype: float32
