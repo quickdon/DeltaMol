@@ -5,7 +5,7 @@ import logging
 import shutil
 from dataclasses import replace
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Sequence
 
 import torch
 from torch.utils.data import TensorDataset
@@ -46,8 +46,20 @@ def _resolve_dtype(dtype: torch.dtype | str | None) -> torch.dtype:
     return resolved
 
 
+def _normalise_dataset_paths(paths: Path | str | Sequence[Path | str]) -> list[Path]:
+    if isinstance(paths, (str, Path)):
+        return [Path(paths)]
+    if isinstance(paths, Sequence):
+        return [Path(item) for item in paths]
+    raise TypeError(f"Unsupported dataset path type: {type(paths)!r}")
+
+
+def _format_dataset_summary(paths: Sequence[Path]) -> str:
+    return ", ".join(str(path) for path in paths)
+
+
 def run_baseline_training(
-    dataset_path: Path,
+    dataset_path: Path | Sequence[Path],
     output_dir: Path,
     *,
     dataset_format: str | None = None,
@@ -82,7 +94,13 @@ def run_baseline_training(
 
     configure_logging(output_dir, resume=resume_from is not None)
     data_dtype = _resolve_dtype(dtype)
-    dataset = load_dataset(dataset_path, format=dataset_format, key_map=dataset_key_map)
+    dataset_paths = _normalise_dataset_paths(dataset_path)
+    dataset_source: Path | Sequence[Path]
+    if len(dataset_paths) == 1:
+        dataset_source = dataset_paths[0]
+    else:
+        dataset_source = dataset_paths
+    dataset = load_dataset(dataset_source, format=dataset_format, key_map=dataset_key_map)
     if dataset.energies is None:
         raise ValueError("Baseline training requires energies in the dataset")
     species = sorted({int(z) for atoms in dataset.atoms for z in atoms})
@@ -107,9 +125,10 @@ def run_baseline_training(
         test_dataset_tensors = TensorDataset(test_formula_vectors, test_energies_tensor)
     if is_main_process():
         LOGGER.info(
-            "Starting baseline training on %d molecules with %d species",
+            "Starting baseline training on %d molecules with %d species from %s",
             len(dataset.energies),
             len(species),
+            _format_dataset_summary(dataset_paths),
         )
     formula_vectors = torch.stack(
         [build_formula_vector(atoms, species=species) for atoms in dataset.atoms]

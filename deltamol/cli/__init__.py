@@ -24,7 +24,12 @@ from ..descriptors.fchl19 import build_fchl19_descriptor
 from ..descriptors.lmbtr import build_lmbtr_descriptor
 from ..descriptors.slatm import build_slatm_descriptor
 from ..descriptors.soap import build_soap_descriptor
-from ..main import _resolve_dtype, run_baseline_training
+from ..main import (
+    _format_dataset_summary,
+    _normalise_dataset_paths,
+    _resolve_dtype,
+    run_baseline_training,
+)
 from ..models import (
     PotentialModelAdapter,
     HybridPotential,
@@ -512,10 +517,16 @@ def _train_baseline(args: argparse.Namespace) -> None:
 
 def _train_potential(args: argparse.Namespace) -> None:
     experiment = load_config(args.config, PotentialExperimentConfig)
-    dataset_path = args.dataset or experiment.dataset.path
-    if dataset_path is None:
+    dataset_cli = args.dataset if args.dataset else None
+    dataset_source = dataset_cli if dataset_cli is not None else experiment.dataset.path
+    if dataset_source is None:
         raise ValueError("A dataset path must be provided via the CLI or configuration file")
-    dataset_path = Path(dataset_path)
+    dataset_paths = _normalise_dataset_paths(dataset_source)
+    dataset_path: Path | Sequence[Path]
+    if len(dataset_paths) == 1:
+        dataset_path = dataset_paths[0]
+    else:
+        dataset_path = dataset_paths
     config_key_map = dict(experiment.dataset.key_map or {})
     try:
         cli_key_map = _parse_dataset_key_overrides(args.dataset_key)
@@ -669,7 +680,10 @@ def _train_potential(args: argparse.Namespace) -> None:
         raise ValueError("Potential training configuration must define an output directory")
     configure_logging(training_cfg.output_dir, resume=args.resume_from is not None)
     if is_main_process():
-        LOGGER.info("Training potential model using dataset at %s", dataset_path)
+        LOGGER.info(
+            "Training potential model using dataset at %s",
+            _format_dataset_summary(dataset_paths),
+        )
     model = _build_potential_model(experiment.model, species)
     baseline, baseline_trainable = _load_baseline(experiment.baseline, species)
     if (
@@ -778,7 +792,7 @@ def _train_potential(args: argparse.Namespace) -> None:
         else:
             trainer.save_checkpoint(checkpoint_path)
             LOGGER.info("Saved potential checkpoint to %s", checkpoint_path)
-        resolved_dataset_cfg = replace(experiment.dataset, path=dataset_path, species=species)
+        resolved_dataset_cfg = replace(experiment.dataset, path=dataset_source, species=species)
         if dataset_format is not None:
             resolved_dataset_cfg = replace(resolved_dataset_cfg, format=dataset_format)
         if test_dataset_path is not None:
@@ -832,7 +846,9 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     train_parser = subcommands.add_parser("train-baseline", help="Train the linear atomic baseline")
-    train_parser.add_argument("dataset", type=Path, help="Path to the dataset file")
+    train_parser.add_argument(
+        "dataset", type=Path, nargs="+", help="One or more dataset files or directories"
+    )
     train_parser.add_argument(
         "--dataset-format",
         choices=_DATASET_FORMAT_CHOICES,
@@ -1036,8 +1052,8 @@ def build_parser() -> argparse.ArgumentParser:
     potential_parser.add_argument(
         "dataset",
         type=Path,
-        nargs="?",
-        help="Path to the dataset file (overrides dataset.path in the config)",
+        nargs="*",
+        help="Optional dataset files or directories (overrides dataset.path in the config)",
     )
     potential_parser.add_argument(
         "--dataset-format",

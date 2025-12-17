@@ -323,6 +323,8 @@ def load_dataset(
         datasets = [load_dataset(p, format=resolved_format, key_map=key_map) for p in path]
         return _concat_datasets(datasets)
     dataset_path = Path(path)
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
     if dataset_path.is_dir():
         datasets = []
         for file_path in sorted(dataset_path.iterdir()):

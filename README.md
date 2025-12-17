@@ -118,7 +118,9 @@ information remains available via the dataset metadata and the forces field can
 be omitted when a source dataset only provides energies. Files stored as NPZ,
 NPY, JSON, YAML, or Torch checkpoints are recognised automatically based on the
 extension, and the CLI exposes `--dataset-format` to override auto-detection
-when necessary. The loader understands MD-style `.npz` archives where a single
+when necessary. When pointing to a directory that contains extensionless files,
+specify `--dataset-format` so the loader knows which reader to use. The loader
+understands MD-style `.npz` archives where a single
 atomic-number array or per-atom force frame is shared across a trajectory; the
 array is broadcast across all coordinate frames so you can load MD trajectories
 without reshaping them. Dataset paths can point to either a single file, a
@@ -202,12 +204,17 @@ The `train-potential` subcommand consumes a structured YAML file that describes
 dataset preprocessing, model architecture, and training parameters. Only the
 most important options such as the dataset path and output directory need to be
 specified on the CLI; all other values live alongside the experiment
-definition.
+definition. The `dataset.path` entry accepts either a single file/directory or
+an explicit list of paths, making it easy to point at multiple MD trajectory
+archives at once. All referenced datasets are concatenated before applying the
+train/validation/test split so each source contributes to every stage.
 
 ```yaml
 # configs/potential.yaml
 dataset:
-  path: datasets/DFT_uniques.npz
+  path:
+    - datasets/DFT_uniques.npz
+    - datasets/relaxed_structures
   format: npz
   cutoff: 6.0
   dtype: float32
