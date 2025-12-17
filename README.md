@@ -118,9 +118,7 @@ information remains available via the dataset metadata and the forces field can
 be omitted when a source dataset only provides energies. Files stored as NPZ,
 NPY, JSON, YAML, or Torch checkpoints are recognised automatically based on the
 extension, and the CLI exposes `--dataset-format` to override auto-detection
-when necessary. When pointing to a directory that contains extensionless files,
-specify `--dataset-format` so the loader knows which reader to use. The loader
-understands MD-style `.npz` archives where a single
+when necessary. The loader understands MD-style `.npz` archives where a single
 atomic-number array or per-atom force frame is shared across a trajectory; the
 array is broadcast across all coordinate frames so you can load MD trajectories
 without reshaping them. Dataset paths can point to either a single file, a
