@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Literal, Optional, Tuple
+from typing import Dict, Literal, Optional, Sequence, Tuple, Union
 
 from .pipeline import PotentialTrainingConfig
 
@@ -12,7 +12,7 @@ from .pipeline import PotentialTrainingConfig
 class DatasetConfig:
     """Options that control dataset preparation for potential training."""
 
-    path: Optional[Path] = None
+    path: Optional[Union[Path, Sequence[Path]]] = None
     format: Optional[str] = None
     test_path: Optional[Path] = None
     test_format: Optional[str] = None
