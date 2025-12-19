@@ -40,6 +40,7 @@ class ModelConfig:
         "transformer",
         "external",
         "hybrid",
+        "leftnet",
         "se3",
         "schnet",
         "dimenet",
@@ -84,6 +85,8 @@ class ModelConfig:
     physnet_num_basis: int = 64
     mace_num_layers: int = 4
     mace_num_radial: int = 16
+    leftnet_num_layers: int = 4
+    leftnet_num_radial: int = 32
 
 
 @dataclass

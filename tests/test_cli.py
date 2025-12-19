@@ -126,3 +126,26 @@ def test_cli_parses_mace_options():
     assert args.model_name == "mace"
     assert args.mace_num_layers == 3
     assert args.mace_num_radial == 24
+
+
+def test_cli_parses_leftnet_options():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "train-potential",
+            "dataset.npz",
+            "--config",
+            "experiment.yaml",
+            "--model",
+            "leftnet",
+            "--leftnet-num-layers",
+            "2",
+            "--leftnet-num-radial",
+            "12",
+        ]
+    )
+
+    assert callable(args.func)
+    assert args.model_name == "leftnet"
+    assert args.leftnet_num_layers == 2
+    assert args.leftnet_num_radial == 12
