@@ -27,8 +27,9 @@ surfaces by embracing three core ideas:
    the EquiformerV2-inspired architecture using the cached descriptors and the
    `train-potential` command. The architecture can be selected in the
    experiment YAML via `model.name` or overridden on the CLI with
-   `--model se3`, `--model gemnet`, `--model equiformer_v2`, or `--model hybrid`
-   while keeping the same residual learning flow as the baseline.
+   `--model se3`, `--model gemnet`, `--model equiformer_v2`, `--model mace`, or
+   `--model hybrid` while keeping the same residual learning flow as the
+   baseline.
 
 ## Evaluation and testing
 
@@ -129,6 +130,25 @@ TensorNet follows the same interface as the other potentials: it respects
 dataset adjacency when provided, applies the shared cutoff for neighbour
 selection, and supports optional analytic force prediction controlled by
 ``predict_forces``.
+
+### MACE potential architecture
+
+DeltaMol now exposes a MACE-inspired attention model adapted from the reference
+implementation at `ACEsuit/mace <https://github.com/ACEsuit/mace>`_. Select it
+with ``model.name: mace`` in an experiment YAML or ``--model mace`` on the CLI.
+Core hyperparameters include:
+
+* ``mace_num_layers`` – number of stacked attention blocks that mix distance
+  features into the query/key/value streams (default 4).
+* ``mace_num_radial`` – size of the Bessel radial basis that biases attention
+  logits and gates value updates (default 16).
+
+The model reuses the shared ``hidden_dim``, ``num_heads``, ``dropout``, and
+``cutoff`` fields. When ``predict_forces`` is enabled, MACE returns analytic
+forces from energy gradients while keeping attention biases differentiable even
+under ``torch.no_grad`` contexts. A small gradient-layout hook keeps the final
+readout weights contiguous after wrapping with DDP so bucket formation remains
+stable during distributed training.
 
 ### PhysNet potential architecture
 

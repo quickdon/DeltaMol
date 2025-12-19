@@ -7,6 +7,7 @@ from deltamol.models.baseline import build_formula_vector
 from deltamol.models.equiformer_v2 import EquiformerV2Config, EquiformerV2Potential
 from deltamol.models.gemnet import GemNetConfig, GemNetPotential
 from deltamol.models.hybrid import HybridPotential, HybridPotentialConfig
+from deltamol.models.mace import MACEConfig, MACEPotential
 from deltamol.models.se3 import SE3TransformerConfig, SE3TransformerPotential
 from deltamol.models.tensornet import TensorNetConfig, TensorNetPotential
 from deltamol.models.physnet import PhysNetConfig, PhysNetPotential
@@ -213,6 +214,129 @@ def test_equiformer_v2_forward_pass_runs():
     assert output.energy.shape == (2,)
     assert output.forces is not None
     assert output.forces.shape == (2, 4, 3)
+
+
+def test_mace_forward_pass_runs():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = MACEConfig(
+        species=species,
+        hidden_dim=32,
+        num_layers=2,
+        num_radial=8,
+        num_heads=4,
+        cutoff=3.5,
+        dropout=0.0,
+        predict_forces=True,
+    )
+    model = MACEPotential(config)
+    node_indices = torch.tensor([[1, 2, 3, 0], [3, 1, 0, 0]], dtype=torch.long)
+    positions = torch.randn(2, 4, 3)
+    adjacency = torch.eye(4).repeat(2, 1, 1)
+    mask = node_indices != 0
+
+    output = model(node_indices, positions, adjacency, mask)
+
+    assert output.energy.shape == (2,)
+    assert output.forces is not None
+    assert output.forces.shape == (2, 4, 3)
+
+
+def test_mace_forces_available_under_no_grad():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = MACEConfig(
+        species=species,
+        hidden_dim=32,
+        num_layers=2,
+        num_radial=8,
+        num_heads=4,
+        cutoff=3.5,
+        dropout=0.0,
+        predict_forces=True,
+    )
+    model = MACEPotential(config)
+    node_indices = torch.tensor([[1, 2, 3]], dtype=torch.long)
+    positions = torch.randn(1, 3, 3)
+    adjacency = torch.ones(1, 3, 3)
+    adjacency[:, torch.arange(3), torch.arange(3)] = 0
+    mask = node_indices != 0
+
+    with torch.no_grad():
+        output = model(node_indices, positions, adjacency, mask)
+
+    assert output.forces is not None
+    assert output.forces.shape == positions.shape
+    assert torch.any(output.forces != 0)
+
+
+def test_mace_grad_layout_matches_parameter_stride():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = MACEConfig(
+        species=species,
+        hidden_dim=24,
+        num_layers=1,
+        num_radial=6,
+        num_heads=3,
+        cutoff=3.0,
+        dropout=0.0,
+    )
+    model = MACEPotential(config)
+
+    node_indices = torch.tensor([[1, 2, 3]], dtype=torch.long)
+    positions = torch.randn(1, 3, 3, requires_grad=True)
+    mask = node_indices != 0
+
+    output = model(node_indices, positions, adjacency=None, mask=mask)
+    output.energy.sum().backward()
+
+    readout_weight = model.readout[-1].weight
+    assert readout_weight.grad is not None
+    assert readout_weight.grad.stride() == readout_weight.stride()
+
+
+def test_mace_refresh_grad_layout_hooks_reorders_hook_handles():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = MACEConfig(
+        species=species,
+        hidden_dim=16,
+        num_layers=1,
+        num_radial=4,
+        num_heads=2,
+        cutoff=3.0,
+        dropout=0.0,
+    )
+    model = MACEPotential(config)
+
+    first_handle = model._grad_layout_hook_handle
+    model.refresh_grad_layout_hooks()
+    second_handle = model._grad_layout_hook_handle
+
+    assert first_handle is not None
+    assert second_handle is not None
+    assert first_handle is not second_handle
+
+    node_indices = torch.tensor([[1, 2, 3]], dtype=torch.long)
+    positions = torch.randn(1, 3, 3, requires_grad=True)
+    mask = node_indices != 0
+
+    readout_weight = model.readout[-1].weight
+    seen_strides = []
+
+    def ddp_like_hook(grad: torch.Tensor | None) -> torch.Tensor | None:
+        if grad is not None:
+            seen_strides.append(grad.stride())
+        return grad
+
+    readout_weight.register_hook(ddp_like_hook)
+
+    output = model(node_indices, positions, adjacency=None, mask=mask)
+    output.energy.sum().backward()
+
+    assert seen_strides
+    assert seen_strides[0] == readout_weight.stride()
 
 
 def test_tensornet_forward_pass_runs():

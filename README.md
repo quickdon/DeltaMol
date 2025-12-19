@@ -294,10 +294,10 @@ configuration:
 
 Architectures can be swapped without editing the YAML by passing
 `--model transformer`, `--model hybrid`, `--model schnet`, `--model dimenet`,
-`--model gemnet`, `--model tensornet`, or `--model se3` on the CLI; the flag
-respects the same residual training flow used by the baseline so SE(3)
-Transformer runs participate in delta-learning
-alongside the hybrid potential. Additional overrides for depth (`--transformer-layers`,
+`--model gemnet`, `--model tensornet`, `--model se3`, `--model physnet`,
+`--model equiformer_v2`, or `--model mace` on the CLI; the flag respects the
+same residual training flow used by the baseline so SE(3) Transformer runs
+participate in delta-learning alongside the hybrid potential. Additional overrides for depth (`--transformer-layers`,
 `--gcn-layers`, `--se3-layers`), width (`--hidden-dim`, `--ffn-dim`,
 `--num-heads`), and SE(3) distance embeddings (`--se3-distance-embedding`) keep
 experiments flexible without needing to duplicate configuration files. When
@@ -375,6 +375,22 @@ parameters in the YAML or via CLI overrides:
 TensorNet follows the same adjacency-aware cutoff handling and supports direct
 force supervision through `predict_forces`, producing analytic forces from the
 predicted energy when enabled.
+
+The MACE option ports the message-passing attention design from
+[`ACEsuit/mace`](https://github.com/ACEsuit/mace) into the DeltaMol interface.
+Select it with `model.name: mace` or `--model mace` and tune its controls via:
+
+* `--mace-num-layers` (`model.mace_num_layers`) – number of distance-aware
+  attention blocks stacked to refine atomic features (default 4).
+* `--mace-num-radial` (`model.mace_num_radial`) – size of the Bessel radial
+  basis used to gate attention logits and values (default 16).
+
+It reuses the shared `hidden_dim`, `num_heads`, `dropout`, and `cutoff`
+settings. When `predict_forces` is enabled, MACE computes analytic forces from
+the energy gradient even inside `torch.no_grad()` contexts, keeping attention
+gradients intact. A lightweight gradient-layout hook keeps the readout weights
+contiguous after DDP wraps the model so bucket formation remains stable in
+multi-GPU runs.
 
 Dataset sections inside the experiment configuration accept the same `format`
 and `key_map` fields exposed on the CLI. Each `key_map` entry follows the
