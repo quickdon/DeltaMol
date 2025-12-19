@@ -278,6 +278,9 @@ class LeftNetPotential(nn.Module):
         mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         mask_bool = mask.bool()
+        mask_count = mask_bool.sum(dim=1, keepdim=True).clamp(min=1)
+        centroid = (positions * mask_bool.unsqueeze(-1)).sum(dim=1, keepdim=True) / mask_count
+        centered = positions - centroid
         displacement = positions.unsqueeze(2) - positions.unsqueeze(1)
         distances = torch.linalg.norm(displacement, dim=-1)
         if adjacency is None:
@@ -293,7 +296,7 @@ class LeftNetPotential(nn.Module):
 
         edge_dir = _normalize(displacement + (~edge_mask).unsqueeze(-1) * 0.0)
         cross = _normalize(
-            torch.cross(positions.unsqueeze(2), positions.unsqueeze(1), dim=-1)
+            torch.cross(centered.unsqueeze(2), centered.unsqueeze(1), dim=-1)
             + (~edge_mask).unsqueeze(-1) * 0.0
         )
         vertical = _normalize(torch.cross(edge_dir, cross, dim=-1) + (~edge_mask).unsqueeze(-1) * 0.0)
@@ -303,7 +306,8 @@ class LeftNetPotential(nn.Module):
         counts = edge_mask.sum(dim=2).clamp(min=1).unsqueeze(-1)
         mean_neighbor = neighbour_sum / counts
         node_dir = _normalize(positions - mean_neighbor)
-        node_cross = _normalize(torch.cross(positions, mean_neighbor, dim=-1))
+        centered_mean_neighbor = mean_neighbor - centroid
+        node_cross = _normalize(torch.cross(centered, centered_mean_neighbor, dim=-1))
         node_vertical = _normalize(torch.cross(node_dir, node_cross, dim=-1))
         node_frame = torch.stack([node_dir, node_cross, node_vertical], dim=-2)  # (B, N, 3, 3)
 
