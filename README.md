@@ -15,8 +15,8 @@ datasets, cache descriptors, train models, and evaluate results.
 * Combine a linear atomic baseline with a hybrid SOAP-guided graph/transformer
   potential to model energy corrections, optionally test an
   SE(3)-Transformer architecture for equivariant attention over molecular
-  geometries, and experiment with a SchNet-style continuous-filter convolution
-  network for end-to-end energy and force prediction.
+  geometries, and experiment with SchNet-, PhysNet-, and other
+  message-passing architectures for end-to-end energy and force prediction.
 * Offer ready-to-use tooling for dataset preparation, model training,
   checkpointing, and evaluation.
 

@@ -130,6 +130,24 @@ dataset adjacency when provided, applies the shared cutoff for neighbour
 selection, and supports optional analytic force prediction controlled by
 ``predict_forces``.
 
+### PhysNet potential architecture
+
+DeltaMol now includes a compact PhysNet-inspired architecture adapted from the
+reference implementation at `MMunibas/PhysNet <https://github.com/MMunibas/PhysNet>`_.
+Select it with ``model.name: physnet`` in an experiment YAML or ``--model
+physnet`` on the CLI. Key hyperparameters include (and can be overridden via the
+matching ``--physnet-*`` flags):
+
+* ``physnet_num_blocks`` – stacked interaction blocks that refine atomic
+  embeddings with attention-weighted messages (default 5).
+* ``physnet_num_basis`` – number of learnable Gaussian radial basis functions
+  used to expand pairwise distances with a smooth cosine cutoff (default 64).
+
+PhysNet shares the same energy/force interface as the other potentials and
+supports analytic force computation via coordinate gradients when
+``predict_forces`` is enabled. The implementation also installs gradient-layout
+hooks to keep DDP bucket formation stable when running distributed training.
+
 ### EquiformerV2 potential architecture
 
 DeltaMol now ships a compact EquiformerV2-style model for equivariant attention

@@ -80,3 +80,26 @@ def test_cli_parses_gemnet_options():
     assert args.gemnet_num_blocks == 2
     assert args.gemnet_num_radial == 8
     assert args.gemnet_num_spherical == 6
+
+
+def test_cli_parses_physnet_options():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "train-potential",
+            "dataset.npz",
+            "--config",
+            "experiment.yaml",
+            "--model",
+            "physnet",
+            "--physnet-num-blocks",
+            "4",
+            "--physnet-num-basis",
+            "80",
+        ]
+    )
+
+    assert callable(args.func)
+    assert args.model_name == "physnet"
+    assert args.physnet_num_blocks == 4
+    assert args.physnet_num_basis == 80

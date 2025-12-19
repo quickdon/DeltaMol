@@ -46,6 +46,8 @@ from ..models import (
     LinearBaselineConfig,
     SchNetConfig,
     SchNetPotential,
+    PhysNetConfig,
+    PhysNetPotential,
     SE3TransformerConfig,
     SE3TransformerPotential,
     build_formula_vector,
@@ -186,6 +188,16 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
             predict_forces=model_cfg.predict_forces,
         )
         return TensorNetPotential(config)
+    if name == "physnet":
+        config = PhysNetConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_blocks=model_cfg.physnet_num_blocks,
+            num_basis=model_cfg.physnet_num_basis,
+            cutoff=model_cfg.cutoff,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return PhysNetPotential(config)
     if name == "gcn":
         config = HybridPotentialConfig(
             species=species_tuple,
@@ -658,6 +670,10 @@ def _train_potential(args: argparse.Namespace) -> None:
         model_overrides["tensornet_num_radial"] = args.tensornet_num_radial
     if args.tensornet_direction_dim is not None:
         model_overrides["tensornet_direction_dim"] = args.tensornet_direction_dim
+    if args.physnet_num_blocks is not None:
+        model_overrides["physnet_num_blocks"] = args.physnet_num_blocks
+    if args.physnet_num_basis is not None:
+        model_overrides["physnet_num_basis"] = args.physnet_num_basis
     if args.residual_mode is not None:
         experiment = replace(experiment, model=replace(experiment.model, residual_mode=args.residual_mode))
     if model_overrides:
@@ -1163,6 +1179,7 @@ def build_parser() -> argparse.ArgumentParser:
             "equiformer_v2",
             "equiformer",
             "equiformer-v2",
+            "physnet",
         ],
         default=None,
         help="Override the architecture defined in the config (options include transformer, hybrid, and se3)",
@@ -1260,6 +1277,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Hidden dimension used to project displacement vectors in TensorNet",
+    )
+    potential_parser.add_argument(
+        "--physnet-num-blocks",
+        type=int,
+        default=None,
+        help="Number of interaction blocks for the PhysNet potential",
+    )
+    potential_parser.add_argument(
+        "--physnet-num-basis",
+        type=int,
+        default=None,
+        help="Number of trainable radial basis functions for PhysNet",
     )
     coord_group = potential_parser.add_mutually_exclusive_group()
     coord_group.add_argument(
