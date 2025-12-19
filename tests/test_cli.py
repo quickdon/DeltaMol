@@ -103,3 +103,26 @@ def test_cli_parses_physnet_options():
     assert args.model_name == "physnet"
     assert args.physnet_num_blocks == 4
     assert args.physnet_num_basis == 80
+
+
+def test_cli_parses_mace_options():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "train-potential",
+            "dataset.npz",
+            "--config",
+            "experiment.yaml",
+            "--model",
+            "mace",
+            "--mace-num-layers",
+            "3",
+            "--mace-num-radial",
+            "24",
+        ]
+    )
+
+    assert callable(args.func)
+    assert args.model_name == "mace"
+    assert args.mace_num_layers == 3
+    assert args.mace_num_radial == 24

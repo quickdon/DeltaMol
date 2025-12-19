@@ -5,6 +5,7 @@ from .dimenet import DimeNetConfig, DimeNetPotential
 from .equiformer_v2 import EquiformerV2Config, EquiformerV2Potential
 from .gemnet import GemNetConfig, GemNetPotential
 from .hybrid import HybridPotential, HybridPotentialConfig
+from .mace import MACEConfig, MACEPotential
 from .se3 import SE3TransformerConfig, SE3TransformerPotential
 from .tensornet import TensorNetConfig, TensorNetPotential
 from .schnet import SchNetConfig, SchNetPotential
@@ -25,6 +26,8 @@ __all__ = [
     "GemNetPotential",
     "TensorNetConfig",
     "TensorNetPotential",
+    "MACEConfig",
+    "MACEPotential",
     "DimeNetConfig",
     "DimeNetPotential",
     "SE3TransformerConfig",

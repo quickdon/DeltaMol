@@ -47,6 +47,7 @@ class ModelConfig:
         "equiformer_v2",
         "tensornet",
         "physnet",
+        "mace",
     ] = "transformer"
     hidden_dim: int = 128
     gcn_layers: int = 2
@@ -81,6 +82,8 @@ class ModelConfig:
     tensornet_direction_dim: int = 32
     physnet_num_blocks: int = 5
     physnet_num_basis: int = 64
+    mace_num_layers: int = 4
+    mace_num_radial: int = 16
 
 
 @dataclass

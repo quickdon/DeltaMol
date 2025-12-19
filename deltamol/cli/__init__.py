@@ -40,6 +40,8 @@ from ..models import (
     EquiformerV2Potential,
     GemNetConfig,
     GemNetPotential,
+    MACEConfig,
+    MACEPotential,
     TensorNetConfig,
     TensorNetPotential,
     LinearAtomicBaseline,
@@ -198,6 +200,18 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
             predict_forces=model_cfg.predict_forces,
         )
         return PhysNetPotential(config)
+    if name == "mace":
+        config = MACEConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_layers=model_cfg.mace_num_layers,
+            num_radial=model_cfg.mace_num_radial,
+            num_heads=model_cfg.num_heads,
+            cutoff=model_cfg.cutoff,
+            dropout=model_cfg.dropout,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return MACEPotential(config)
     if name == "gcn":
         config = HybridPotentialConfig(
             species=species_tuple,
@@ -674,6 +688,10 @@ def _train_potential(args: argparse.Namespace) -> None:
         model_overrides["physnet_num_blocks"] = args.physnet_num_blocks
     if args.physnet_num_basis is not None:
         model_overrides["physnet_num_basis"] = args.physnet_num_basis
+    if args.mace_num_layers is not None:
+        model_overrides["mace_num_layers"] = args.mace_num_layers
+    if args.mace_num_radial is not None:
+        model_overrides["mace_num_radial"] = args.mace_num_radial
     if args.residual_mode is not None:
         experiment = replace(experiment, model=replace(experiment.model, residual_mode=args.residual_mode))
     if model_overrides:
@@ -1180,9 +1198,10 @@ def build_parser() -> argparse.ArgumentParser:
             "equiformer",
             "equiformer-v2",
             "physnet",
+        "mace",
         ],
         default=None,
-        help="Override the architecture defined in the config (options include transformer, hybrid, and se3)",
+        help="Override the architecture defined in the config (options include transformer, hybrid, se3, and mace variants)",
     )
     potential_parser.add_argument(
         "--hidden-dim", type=int, default=None, help="Hidden dimension for the potential backbone"
@@ -1289,6 +1308,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Number of trainable radial basis functions for PhysNet",
+    )
+    potential_parser.add_argument(
+        "--mace-num-layers",
+        type=int,
+        default=None,
+        help="Number of interaction blocks for the MACE-inspired potential",
+    )
+    potential_parser.add_argument(
+        "--mace-num-radial",
+        type=int,
+        default=None,
+        help="Size of the Bessel radial basis used to bias MACE attention",
     )
     coord_group = potential_parser.add_mutually_exclusive_group()
     coord_group.add_argument(
