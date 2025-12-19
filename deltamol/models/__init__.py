@@ -8,6 +8,7 @@ from .hybrid import HybridPotential, HybridPotentialConfig
 from .se3 import SE3TransformerConfig, SE3TransformerPotential
 from .tensornet import TensorNetConfig, TensorNetPotential
 from .schnet import SchNetConfig, SchNetPotential
+from .physnet import PhysNetConfig, PhysNetPotential
 from .potential import PotentialOutput
 
 __all__ = [
@@ -30,6 +31,8 @@ __all__ = [
     "SE3TransformerPotential",
     "SchNetConfig",
     "SchNetPotential",
+    "PhysNetConfig",
+    "PhysNetPotential",
     "load_external_model",
     "PotentialOutput",
 ]
