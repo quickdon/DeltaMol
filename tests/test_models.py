@@ -7,6 +7,7 @@ from deltamol.models.baseline import build_formula_vector
 from deltamol.models.equiformer_v2 import EquiformerV2Config, EquiformerV2Potential
 from deltamol.models.gemnet import GemNetConfig, GemNetPotential
 from deltamol.models.hybrid import HybridPotential, HybridPotentialConfig
+from deltamol.models.leftnet import LeftNetConfig, LeftNetPotential
 from deltamol.models.mace import MACEConfig, MACEPotential
 from deltamol.models.se3 import SE3TransformerConfig, SE3TransformerPotential
 from deltamol.models.tensornet import TensorNetConfig, TensorNetPotential
@@ -519,3 +520,29 @@ def test_equiformer_v2_energy_dependent_on_coordinates():
     grad = torch.autograd.grad(energy, positions)[0]
 
     assert torch.max(torch.abs(grad)) > 0
+
+
+def test_leftnet_forward_and_forces():
+    torch.manual_seed(0)
+    species = (1, 6)
+    config = LeftNetConfig(
+        species=species,
+        hidden_dim=16,
+        num_layers=1,
+        num_radial=6,
+        cutoff=4.0,
+        predict_forces=True,
+    )
+    model = LeftNetPotential(config)
+    node_indices = torch.tensor([[1, 2, 0]], dtype=torch.long)
+    positions = torch.tensor([[[0.0, 0.0, 0.0], [1.0, 0.4, -0.2], [0.2, -0.1, 0.3]]])
+    adjacency = torch.tensor([[[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]])
+    mask = node_indices != 0
+
+    with torch.no_grad():
+        output = model(node_indices, positions, adjacency, mask)
+
+    assert output.energy.shape == (1,)
+    assert output.forces is not None
+    assert output.forces.shape == positions.shape
+    assert torch.all(torch.isfinite(output.forces))

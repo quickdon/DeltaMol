@@ -168,6 +168,26 @@ supports analytic force computation via coordinate gradients when
 ``predict_forces`` is enabled. The implementation also installs gradient-layout
 hooks to keep DDP bucket formation stable when running distributed training.
 
+### LEFTNet potential architecture
+
+DeltaMol now integrates a LEFTNet-inspired equivariant potential adapted from
+the reference implementation at `yuanqidu/LeftNet
+<https://github.com/yuanqidu/LeftNet>`_. Select it with ``model.name: leftnet``
+in an experiment YAML or ``--model leftnet`` on the CLI. Key hyperparameters
+include:
+
+* ``leftnet_num_layers`` – number of stacked interaction blocks combining
+  equivariant message passing and frame-transition encoding (default 4).
+* ``leftnet_num_radial`` – number of radial basis functions used to embed
+  interatomic distances with a smooth cutoff (default 32).
+
+LEFTNet mixes invariant scalar features with orientation-aware vector channels,
+builds local frames per edge and per node, and supports analytic force
+computation via energy gradients while keeping attention-style weights
+differentiable even when the forward pass is wrapped in ``torch.no_grad``.
+Gradient-layout hooks keep the final readout contiguous after DDP wrapping to
+avoid bucket formation warnings during distributed training.
+
 ### EquiformerV2 potential architecture
 
 DeltaMol now ships a compact EquiformerV2-style model for equivariant attention
