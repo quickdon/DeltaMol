@@ -77,8 +77,12 @@ class PhysNetBlock(nn.Module):
         attn_logits = self.attention(torch.cat([central, messages], dim=-1)).squeeze(-1)
         neg_inf = torch.finfo(attn_logits.dtype).min
         attn_logits = attn_logits.masked_fill(~edge_mask, neg_inf)
+        has_neighbour = edge_mask.any(dim=2, keepdim=True)
+        attn_logits = attn_logits.masked_fill(~has_neighbour, 0.0)
+
         attn_weights = torch.softmax(attn_logits, dim=2)
         attn_weights = attn_weights * edge_mask
+        attn_weights = torch.where(has_neighbour, attn_weights, torch.zeros_like(attn_weights))
         normaliser = attn_weights.sum(dim=2, keepdim=True).clamp(min=1e-9)
         attn_weights = attn_weights / normaliser
 
