@@ -127,7 +127,7 @@ class LiteFusionBlock(nn.Module):
         edge_update = edge_update.view(B, N, N, self.num_heads, self.head_dim)
         edge_update = edge_update * edge_mask.unsqueeze(-1).unsqueeze(-1)
 
-        edge_values = v.unsqueeze(2) * (1.0 + edge_update)
+        edge_values = v.unsqueeze(1) * (1.0 + edge_update)
         edge_values = edge_values.permute(0, 3, 1, 2, 4)
         context = torch.einsum("bhij,bhijd->bihd", attn, edge_values)
         context = context.reshape(B, N, self.hidden_dim)
