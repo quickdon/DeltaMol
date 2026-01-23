@@ -295,7 +295,7 @@ configuration:
 Architectures can be swapped without editing the YAML by passing
 `--model transformer`, `--model hybrid`, `--model schnet`, `--model dimenet`,
 `--model gemnet`, `--model tensornet`, `--model se3`, `--model physnet`,
-`--model equiformer_v2`, or `--model mace` on the CLI; the flag respects the
+`--model equiformer_v2`, `--model mace`, or `--model litefusion` on the CLI; the flag respects the
 same residual training flow used by the baseline so SE(3) Transformer runs
 participate in delta-learning alongside the hybrid potential. Additional overrides for depth (`--transformer-layers`,
 `--gcn-layers`, `--se3-layers`), width (`--hidden-dim`, `--ffn-dim`,
@@ -391,6 +391,25 @@ the energy gradient even inside `torch.no_grad()` contexts, keeping attention
 gradients intact. A lightweight gradient-layout hook keeps the readout weights
 contiguous after DDP wraps the model so bucket formation remains stable in
 multi-GPU runs.
+
+The LiteFusion option blends mixed radial basis expansions, directional edge
+features, and distance-aware attention into a lightweight architecture. Choose
+`model.name: litefusion` or `--model litefusion` and configure it with:
+
+* `--litefusion-num-blocks` (`model.litefusion_num_blocks`) – number of stacked
+  attention blocks (default 3).
+* `--litefusion-num-radial` (`model.litefusion_num_radial`) – Bessel radial
+  basis size for distance expansion (default 6).
+* `--litefusion-num-gaussians` (`model.litefusion_num_gaussians`) – Gaussian
+  radial basis size for distance expansion (default 6).
+* `--litefusion-num-spherical` (`model.litefusion_num_spherical`) – number of
+  directional projections used to encode edge orientations (default 4).
+* `--litefusion-rbf-dim` (`model.litefusion_rbf_dim`) – hidden dimension for the
+  fused radial embedding (default 32).
+
+LiteFusion reuses the shared `hidden_dim`, `num_heads`, `dropout`, and `cutoff`
+settings, and supports analytic force prediction via energy gradients when
+`predict_forces` is enabled.
 
 Dataset sections inside the experiment configuration accept the same `format`
 and `key_map` fields exposed on the CLI. Each `key_map` entry follows the

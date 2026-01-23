@@ -49,6 +49,7 @@ class ModelConfig:
         "tensornet",
         "physnet",
         "mace",
+        "litefusion",
     ] = "transformer"
     hidden_dim: int = 128
     gcn_layers: int = 2
@@ -87,6 +88,11 @@ class ModelConfig:
     mace_num_radial: int = 16
     leftnet_num_layers: int = 4
     leftnet_num_radial: int = 32
+    litefusion_num_blocks: int = 3
+    litefusion_num_radial: int = 6
+    litefusion_num_gaussians: int = 6
+    litefusion_num_spherical: int = 4
+    litefusion_rbf_dim: int = 32
 
 
 @dataclass

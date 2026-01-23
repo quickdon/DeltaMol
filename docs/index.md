@@ -150,6 +150,29 @@ under ``torch.no_grad`` contexts. A small gradient-layout hook keeps the final
 readout weights contiguous after wrapping with DDP so bucket formation remains
 stable during distributed training.
 
+### LiteFusion potential architecture
+
+DeltaMol also includes a LiteFusion potential that blends radial basis fusion,
+directional edge features, and distance-aware attention into a compact model
+suited for efficient experimentation. Select it with ``model.name: litefusion``
+in an experiment YAML or ``--model litefusion`` on the CLI. Core hyperparameters
+include:
+
+* ``litefusion_num_blocks`` – number of attention blocks stacked sequentially
+  (default 3).
+* ``litefusion_num_radial`` – Bessel radial basis size for distance expansion
+  (default 6).
+* ``litefusion_num_gaussians`` – Gaussian radial basis size for distance
+  expansion (default 6).
+* ``litefusion_num_spherical`` – number of directional projections used to
+  encode edge orientation (default 4).
+* ``litefusion_rbf_dim`` – hidden dimension for the fused radial embedding
+  (default 32).
+
+LiteFusion reuses the shared ``hidden_dim``, ``num_heads``, ``dropout``, and
+``cutoff`` settings. When ``predict_forces`` is enabled, it provides analytic
+forces via gradients of the summed energy with respect to atomic coordinates.
+
 ### PhysNet potential architecture
 
 DeltaMol now includes a compact PhysNet-inspired architecture adapted from the

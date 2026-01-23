@@ -149,3 +149,35 @@ def test_cli_parses_leftnet_options():
     assert args.model_name == "leftnet"
     assert args.leftnet_num_layers == 2
     assert args.leftnet_num_radial == 12
+
+
+def test_cli_parses_litefusion_options():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "train-potential",
+            "dataset.npz",
+            "--config",
+            "experiment.yaml",
+            "--model",
+            "litefusion",
+            "--litefusion-num-blocks",
+            "2",
+            "--litefusion-num-radial",
+            "8",
+            "--litefusion-num-gaussians",
+            "10",
+            "--litefusion-num-spherical",
+            "3",
+            "--litefusion-rbf-dim",
+            "24",
+        ]
+    )
+
+    assert callable(args.func)
+    assert args.model_name == "litefusion"
+    assert args.litefusion_num_blocks == 2
+    assert args.litefusion_num_radial == 8
+    assert args.litefusion_num_gaussians == 10
+    assert args.litefusion_num_spherical == 3
+    assert args.litefusion_rbf_dim == 24
