@@ -8,6 +8,7 @@ from deltamol.models.equiformer_v2 import EquiformerV2Config, EquiformerV2Potent
 from deltamol.models.gemnet import GemNetConfig, GemNetPotential
 from deltamol.models.hybrid import HybridPotential, HybridPotentialConfig
 from deltamol.models.leftnet import LeftNetConfig, LeftNetPotential
+from deltamol.models.litefusion import LiteFusionConfig, LiteFusionPotential
 from deltamol.models.mace import MACEConfig, MACEPotential
 from deltamol.models.se3 import SE3TransformerConfig, SE3TransformerPotential
 from deltamol.models.tensornet import TensorNetConfig, TensorNetPotential
@@ -231,6 +232,35 @@ def test_mace_forward_pass_runs():
         predict_forces=True,
     )
     model = MACEPotential(config)
+    node_indices = torch.tensor([[1, 2, 3, 0], [3, 1, 0, 0]], dtype=torch.long)
+    positions = torch.randn(2, 4, 3)
+    adjacency = torch.eye(4).repeat(2, 1, 1)
+    mask = node_indices != 0
+
+    output = model(node_indices, positions, adjacency, mask)
+
+    assert output.energy.shape == (2,)
+    assert output.forces is not None
+    assert output.forces.shape == (2, 4, 3)
+
+
+def test_litefusion_forward_pass_runs():
+    torch.manual_seed(0)
+    species = (1, 6, 8)
+    config = LiteFusionConfig(
+        species=species,
+        hidden_dim=32,
+        num_blocks=2,
+        num_heads=4,
+        num_radial=6,
+        num_gaussians=6,
+        num_spherical=4,
+        rbf_dim=16,
+        cutoff=3.5,
+        dropout=0.0,
+        predict_forces=True,
+    )
+    model = LiteFusionPotential(config)
     node_indices = torch.tensor([[1, 2, 3, 0], [3, 1, 0, 0]], dtype=torch.long)
     positions = torch.randn(2, 4, 3)
     adjacency = torch.eye(4).repeat(2, 1, 1)

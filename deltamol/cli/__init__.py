@@ -40,6 +40,8 @@ from ..models import (
     EquiformerV2Potential,
     GemNetConfig,
     GemNetPotential,
+    LiteFusionConfig,
+    LiteFusionPotential,
     MACEConfig,
     MACEPotential,
     LeftNetConfig,
@@ -214,6 +216,21 @@ def _build_potential_model(model_cfg: ModelConfig, species: Sequence[int]):
             predict_forces=model_cfg.predict_forces,
         )
         return MACEPotential(config)
+    if name == "litefusion":
+        config = LiteFusionConfig(
+            species=species_tuple,
+            hidden_dim=model_cfg.hidden_dim,
+            num_blocks=model_cfg.litefusion_num_blocks,
+            num_heads=model_cfg.num_heads,
+            num_radial=model_cfg.litefusion_num_radial,
+            num_gaussians=model_cfg.litefusion_num_gaussians,
+            num_spherical=model_cfg.litefusion_num_spherical,
+            rbf_dim=model_cfg.litefusion_rbf_dim,
+            cutoff=model_cfg.cutoff,
+            dropout=model_cfg.dropout,
+            predict_forces=model_cfg.predict_forces,
+        )
+        return LiteFusionPotential(config)
     if name == "leftnet":
         config = LeftNetConfig(
             species=species_tuple,
@@ -708,6 +725,16 @@ def _train_potential(args: argparse.Namespace) -> None:
         model_overrides["leftnet_num_layers"] = args.leftnet_num_layers
     if args.leftnet_num_radial is not None:
         model_overrides["leftnet_num_radial"] = args.leftnet_num_radial
+    if args.litefusion_num_blocks is not None:
+        model_overrides["litefusion_num_blocks"] = args.litefusion_num_blocks
+    if args.litefusion_num_radial is not None:
+        model_overrides["litefusion_num_radial"] = args.litefusion_num_radial
+    if args.litefusion_num_gaussians is not None:
+        model_overrides["litefusion_num_gaussians"] = args.litefusion_num_gaussians
+    if args.litefusion_num_spherical is not None:
+        model_overrides["litefusion_num_spherical"] = args.litefusion_num_spherical
+    if args.litefusion_rbf_dim is not None:
+        model_overrides["litefusion_rbf_dim"] = args.litefusion_rbf_dim
     if args.residual_mode is not None:
         experiment = replace(experiment, model=replace(experiment.model, residual_mode=args.residual_mode))
     if model_overrides:
@@ -1216,6 +1243,7 @@ def build_parser() -> argparse.ArgumentParser:
             "physnet",
             "mace",
             "leftnet",
+            "litefusion",
         ],
         default=None,
         help="Override the architecture defined in the config (options include transformer, hybrid, se3, and mace variants)",
@@ -1349,6 +1377,36 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Number of radial basis functions used by LEFTNet",
+    )
+    potential_parser.add_argument(
+        "--litefusion-num-blocks",
+        type=int,
+        default=None,
+        help="Number of LiteFusion attention blocks",
+    )
+    potential_parser.add_argument(
+        "--litefusion-num-radial",
+        type=int,
+        default=None,
+        help="Size of the Bessel radial basis for LiteFusion",
+    )
+    potential_parser.add_argument(
+        "--litefusion-num-gaussians",
+        type=int,
+        default=None,
+        help="Size of the Gaussian radial basis for LiteFusion",
+    )
+    potential_parser.add_argument(
+        "--litefusion-num-spherical",
+        type=int,
+        default=None,
+        help="Number of directional projections for LiteFusion edge features",
+    )
+    potential_parser.add_argument(
+        "--litefusion-rbf-dim",
+        type=int,
+        default=None,
+        help="Hidden dimension of the fused radial embedding for LiteFusion",
     )
     coord_group = potential_parser.add_mutually_exclusive_group()
     coord_group.add_argument(
