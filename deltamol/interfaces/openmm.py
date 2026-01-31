@@ -12,6 +12,7 @@ class OpenMMTypeMap:
     """Map OpenMM atom type indices (1-based) to atomic numbers."""
 
     atomic_numbers: Sequence[int]
+    species: Sequence[int] | None = None
 
     def resolve(self, types: Iterable[int]) -> list[int]:
         mapping = list(self.atomic_numbers)
@@ -33,13 +34,20 @@ class DeltaMolTorchModule(torch.nn.Module):
         self.model = model
         self.cutoff = float(cutoff)
         self.dtype = dtype
-        self.register_buffer(
-            "type_map",
-            torch.tensor(type_map.atomic_numbers, dtype=torch.long),
-        )
+        species = type_map.species
+        if species is None:
+            species = getattr(getattr(model, "config", None), "species", None)
+        if species is None:
+            raise ValueError(
+                "OpenMM TorchForce requires species indices. Provide OpenMMTypeMap.species "
+                "or use a model with config.species."
+            )
+        index_map = {int(z): i + 1 for i, z in enumerate(species)}
+        type_indices = [index_map[int(z)] for z in type_map.atomic_numbers]
+        self.register_buffer("type_indices", torch.tensor(type_indices, dtype=torch.long))
 
     def forward(self, positions: torch.Tensor, atom_types: torch.Tensor):
-        node_indices = self.type_map[atom_types.long() - 1]
+        node_indices = self.type_indices[atom_types.long() - 1]
         positions = positions.to(dtype=self.dtype)
         distances = torch.cdist(positions, positions)
         adjacency = (distances < self.cutoff).to(positions.dtype)
