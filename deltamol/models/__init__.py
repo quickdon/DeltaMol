@@ -8,6 +8,7 @@ from .hybrid import HybridPotential, HybridPotentialConfig
 from .leftnet import LeftNetConfig, LeftNetPotential
 from .litefusion import LiteFusionConfig, LiteFusionPotential
 from .mace import MACEConfig, MACEPotential
+from .factory import build_potential_model
 from .se3 import SE3TransformerConfig, SE3TransformerPotential
 from .tensornet import TensorNetConfig, TensorNetPotential
 from .schnet import SchNetConfig, SchNetPotential
@@ -36,6 +37,7 @@ __all__ = [
     "MACEPotential",
     "DimeNetConfig",
     "DimeNetPotential",
+    "build_potential_model",
     "SE3TransformerConfig",
     "SE3TransformerPotential",
     "SchNetConfig",

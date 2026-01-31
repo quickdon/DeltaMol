@@ -31,6 +31,11 @@ surfaces by embracing three core ideas:
    `--model hybrid` while keeping the same residual learning flow as the
    baseline.
 
+## MD engine integration
+
+* [LAMMPS / OpenMM interface guide](md_interfaces.md) – step-by-step setup for
+  running trained potentials inside common MD engines.
+
 ## Evaluation and testing
 
 DeltaMol ships reusable helpers for evaluating both the linear baseline and the
