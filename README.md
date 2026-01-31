@@ -538,8 +538,10 @@ it as individual datasets in an HDF5 cache.
 ## Documentation and tests
 
 The `docs/` directory contains a growing set of guides on design decisions,
-workflow automation, and future roadmap items. Unit tests live under `tests/`
-and can be executed with `pytest` once the development extras are installed:
+workflow automation, and future roadmap items. For MD integration, see the
+LAMMPS/OpenMM interface guide in `docs/md_interfaces.md`. Unit tests live under
+`tests/` and can be executed with `pytest` once the development extras are
+installed:
 
 ```bash
 pip install .[dev]
